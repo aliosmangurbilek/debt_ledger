@@ -5,6 +5,7 @@ Ana Veresiye Defteri Uygulaması - Veritabanı Destekli
 import sys
 import json
 from datetime import datetime
+from pathlib import Path
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QListWidget, QPushButton, QLabel, QStackedWidget,
                              QMessageBox, QInputDialog, QTableWidget, QTableWidgetItem,
@@ -21,6 +22,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.fonts import addMapping
 import os
 from database_manager import DatabaseManager
+from download_fonts import FontDownloader
 
 class DebtRecord:
     """Borç kaydı sınıfı - artık veritabanından gelecek"""
@@ -32,6 +34,29 @@ class DebtRecord:
         self.payment_amount = float(payment_amount) if payment_amount else 0.0
         self.payment_status = payment_status
         self.remaining_debt = float(remaining_debt) if remaining_debt else 0.0
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'date': self.date,
+            'description': self.description,
+            'debt_amount': self.debt_amount,
+            'payment_amount': self.payment_amount,
+            'payment_status': self.payment_status,
+            'remaining_debt': self.remaining_debt
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(
+            record_id=data.get('id'),
+            date=data.get('date'),
+            description=data.get('description'),
+            debt_amount=data.get('debt_amount', 0),
+            payment_amount=data.get('payment_amount', 0),
+            payment_status=data.get('payment_status', "Ödenmedi"),
+            remaining_debt=data.get('remaining_debt', 0)
+        )
 
 class Creditor:
     """Borçlu sınıfı - artık veritabanından gelecek"""
@@ -335,7 +360,7 @@ class CreditorDetailWidget(QWidget):
             backup_path = self.parent_app.db_manager.create_backup("manual")
             if backup_path:
                 QMessageBox.information(self, "Yedekleme Başarılı",
-                                      f"Yedek başarıyla oluşturuldu!")
+                                      "Yedek başarıyla oluşturuldu!")
             else:
                 QMessageBox.warning(self, "Yedekleme Hatası",
                                   "Yedek oluşturulamadı!")
@@ -425,116 +450,61 @@ class CreditorDetailWidget(QWidget):
 
         # Register fonts for Turkish characters
         try:
-            # First try project fonts directory
             fonts_dir = os.path.join(os.path.dirname(__file__), 'fonts')
-
+            # Öncelikle Roboto'yu deneyelim
             if os.path.exists(os.path.join(fonts_dir, 'Roboto-Regular.ttf')):
                 pdfmetrics.registerFont(TTFont('Roboto', os.path.join(fonts_dir, 'Roboto-Regular.ttf')))
                 pdfmetrics.registerFont(TTFont('Roboto-Bold', os.path.join(fonts_dir, 'Roboto-Bold.ttf')))
-
                 addMapping('Roboto', 0, 0, 'Roboto')
                 addMapping('Roboto', 1, 0, 'Roboto-Bold')
-
                 title_font = 'Roboto-Bold'
                 regular_font = 'Roboto'
-                print("✅ Roboto fontları kullanılıyor")
             else:
-                raise Exception("Local fonts not found")
-
-        except:
-            try:
-                # Try to use DejaVu fonts (commonly available on Linux)
-                pdfmetrics.registerFont(TTFont('DejaVuSans', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
-                pdfmetrics.registerFont(TTFont('DejaVuSans-Bold', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'))
-
-                addMapping('DejaVuSans', 0, 0, 'DejaVuSans')
-                addMapping('DejaVuSans', 1, 0, 'DejaVuSans-Bold')
-
-                title_font = 'DejaVuSans-Bold'
-                regular_font = 'DejaVuSans'
-                print("✅ DejaVu fontları kullanılıyor")
-            except:
-                try:
-                    # Fallback: try Liberation fonts
-                    pdfmetrics.registerFont(TTFont('LiberationSans', '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf'))
-                    pdfmetrics.registerFont(TTFont('LiberationSans-Bold', '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf'))
-
-                    addMapping('LiberationSans', 0, 0, 'LiberationSans')
-                    addMapping('LiberationSans', 1, 0, 'LiberationSans-Bold')
-
-                    title_font = 'LiberationSans-Bold'
-                    regular_font = 'LiberationSans'
-                    print("✅ Liberation fontları kullanılıyor")
-                except:
-                    # Last fallback: use built-in fonts (may not support Turkish characters fully)
-                    title_font = 'Helvetica-Bold'
-                    regular_font = 'Helvetica'
-                    print("⚠️ Standart fontlar kullanılıyor - Türkçe karakterler d��zgün görünmeyebilir")
+                # Roboto yoksa Noto Sans veya sistem fontlarından birini kullan
+                fallback_fonts = ['NotoSans-Regular.ttf', 'Arial.ttf', 'Calibri.ttf', 'Tahoma.ttf', 'Verdana.ttf', 'SegoeUI.ttf']
+                for fname in fallback_fonts:
+                    path = os.path.join(fonts_dir, fname)
+                    if os.path.exists(path):
+                        # Strip style suffixes for font naming
+                        font_name = os.path.splitext(fname)[0].replace('-Regular', '').replace('-Bold', '')
+                        pdfmetrics.registerFont(TTFont(font_name, path))
+                        # Use the same for title and regular
+                        title_font = font_name
+                        regular_font = font_name
+                        break
+                else:
+                    raise Exception("Local fonts not found")
+        except Exception as e:
+            print(f"⚠️ Font yükleme hatası: {e}")
+            print("⚠️ Standart fontlar kullanılacak")
+            title_font = 'Helvetica-Bold'
+            regular_font = 'Helvetica'
 
         # Title
         c.setFont(title_font, 16)
         c.drawString(50, height - 50, f"{self.creditor.name} için Alacak Verecek Çıktısı")
 
-        # Total debt
-        c.setFont(title_font, 12)
-        total_debt = self.creditor.get_total_debt()
-        c.drawString(50, height - 80, f"Toplam Ödenmemiş Borç: ₺{total_debt:.2f}")
-
         # Table headers
-        y_position = height - 120
         headers = ["Tarih", "Açıklama", "Borç", "Ödeme", "Kalan", "İşlem Türü"]
         x_positions = [50, 120, 250, 320, 390, 470]
-
         c.setFont(title_font, 10)
         for i, header in enumerate(headers):
-            c.drawString(x_positions[i], y_position, header)
-
-        # Draw line under headers
-        c.line(50, y_position - 5, 550, y_position - 5)
+            c.drawString(x_positions[i], height - 120, header)
 
         # Table data
         c.setFont(regular_font, 9)
-        y_position -= 20
-
+        y_position = height - 140
         for record in self.creditor.records:
-            if y_position < 50:  # Start new page if needed
-                c.showPage()
-                c.setFont(regular_font, 9)
-                y_position = height - 50
-
-            # Convert payment status to Turkish if needed
-            status = record.payment_status
-            if status == "Paid":
-                status = "Ödendi"
-            elif status == "Unpaid":
-                status = "Ödenmedi"
-
             data = [
                 record.date,
-                record.description[:20] if len(record.description) > 20 else record.description,
+                record.description,
                 f"₺{record.debt_amount:.2f}",
                 f"₺{record.payment_amount:.2f}",
                 f"₺{record.remaining_debt:.2f}",
-                status
+                record.payment_status
             ]
-
             for i, item in enumerate(data):
-                try:
-                    c.drawString(x_positions[i], y_position, str(item))
-                except UnicodeEncodeError:
-                    # If there's an encoding issue, try to handle it
-                    try:
-                        # Convert Turkish characters to ASCII equivalents as fallback
-                        turkish_chars = {'ç': 'c', 'Ç': 'C', 'ğ': 'g', 'Ğ': 'G', 'ı': 'i', 'İ': 'I', 'ö': 'o', 'Ö': 'O', 'ş': 's', 'Ş': 'S', 'ü': 'u', 'Ü': 'U', '₺': 'TL'}
-                        clean_item = str(item)
-                        for tr_char, en_char in turkish_chars.items():
-                            clean_item = clean_item.replace(tr_char, en_char)
-                        c.drawString(x_positions[i], y_position, clean_item)
-                    except:
-                        # Last resort: remove problematic characters
-                        clean_item = ''.join(char for char in str(item) if ord(char) < 128)
-                        c.drawString(x_positions[i], y_position, clean_item)
-
+                c.drawString(x_positions[i], y_position, str(item))
             y_position -= 15
 
         c.save()
@@ -738,8 +708,9 @@ class DebtLedgerApp(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        # Veritabanı yöneticisini başlat
+        # Veritabanı yöneticisini başlat ve fontları hazırla
         self.db_manager = DatabaseManager()
+        FontDownloader().setup_fonts()
 
         # Eski JSON dosyasından geçiş yap
         self.migrate_from_old_format()
@@ -959,6 +930,8 @@ class DebtLedgerApp(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    # Use a font with Turkish character support on Windows
+    app.setFont(QFont("Segoe UI", 12))
     window = DebtLedgerApp()
     window.show()
     sys.exit(app.exec())

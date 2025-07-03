@@ -1,4 +1,3 @@
 PyQt6>=6.0.0
 reportlab>=3.6.0
-sqlite3
-shutil
+requests>=2.25.0

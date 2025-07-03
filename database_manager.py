@@ -5,15 +5,43 @@ import sqlite3
 import json
 import os
 import shutil
+import sys
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
+
+def get_data_dir():
+    """Veri dosyaları için uygun dizini döndür"""
+    if getattr(sys, 'frozen', False):
+        # PyInstaller ile paketlenmiş EXE dosyası
+        # Kullanıcının belgeler klasöründe uygulama klasörü oluştur
+        app_data_dir = os.path.join(os.path.expanduser("~"), "Documents", "VeresiyeDefteri")
+    else:
+        # Normal Python scripti
+        app_data_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Klasörü oluştur
+    os.makedirs(app_data_dir, exist_ok=True)
+    return app_data_dir
 
 class DatabaseManager:
     """SQLite veritabanı yönetimi ve yedekleme sistemi"""
     
-    def __init__(self, db_path: str = "veresiye_defteri.db", backup_dir: str = "D:/yedek/veresiye_defteri"):
-        self.db_path = db_path
-        self.backup_dir = backup_dir
+    def __init__(self, db_path: str = None, backup_dir: str = None):
+        # Veri dizinini al
+        data_dir = get_data_dir()
+
+        # Varsayılan veritabanı yolu
+        if db_path is None:
+            self.db_path = os.path.join(data_dir, "veresiye_defteri.db")
+        else:
+            self.db_path = db_path
+
+        # Varsayılan yedek dizini
+        if backup_dir is None:
+            self.backup_dir = os.path.join(data_dir, "backups")
+        else:
+            self.backup_dir = backup_dir
+
         self.ensure_backup_directory()
         self.init_database()
     
