@@ -6,8 +6,7 @@ A PyQt6 application for managing creditor debts and payments.
 
 import sys
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtGui import QFont, QFontDatabase
-from pathlib import Path
+from PyQt6.QtGui import QFont, QFontDatabase, QTextDocument
 from debt_ledger import DebtLedgerApp
 
 def setup_turkish_fonts():

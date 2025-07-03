@@ -4,7 +4,7 @@ Ana Veresiye Defteri Uygulaması - Veritabanı Destekli
 
 import sys
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QListWidget, QPushButton, QLabel, QStackedWidget,
@@ -26,7 +26,7 @@ from download_fonts import FontDownloader
 
 class DebtRecord:
     """Borç kaydı sınıfı - artık veritabanından gelecek"""
-    def __init__(self, record_id, date, description, debt_amount=0, payment_amount=0, payment_status="Ödenmedi", remaining_debt=0):
+    def __init__(self, record_id, date, description, debt_amount=0, payment_amount=0, payment_status="Ödenmedi", remaining_debt=0, kod1="", kod2="", birim=""):
         self.id = record_id
         self.date = date
         self.description = description
@@ -34,6 +34,9 @@ class DebtRecord:
         self.payment_amount = float(payment_amount) if payment_amount else 0.0
         self.payment_status = payment_status
         self.remaining_debt = float(remaining_debt) if remaining_debt else 0.0
+        self.kod1 = kod1
+        self.kod2 = kod2
+        self.birim = birim
 
     def to_dict(self):
         return {
@@ -43,7 +46,10 @@ class DebtRecord:
             'debt_amount': self.debt_amount,
             'payment_amount': self.payment_amount,
             'payment_status': self.payment_status,
-            'remaining_debt': self.remaining_debt
+            'remaining_debt': self.remaining_debt,
+            'kod1': self.kod1,
+            'kod2': self.kod2,
+            'birim': self.birim
         }
 
     @classmethod
@@ -55,7 +61,10 @@ class DebtRecord:
             debt_amount=data.get('debt_amount', 0),
             payment_amount=data.get('payment_amount', 0),
             payment_status=data.get('payment_status', "Ödenmedi"),
-            remaining_debt=data.get('remaining_debt', 0)
+            remaining_debt=data.get('remaining_debt', 0),
+            kod1=data.get('kod1', ""),
+            kod2=data.get('kod2', ""),
+            birim=data.get('birim', "")
         )
 
 class Creditor:
@@ -83,7 +92,10 @@ class Creditor:
             debt_amount=r['debt_amount'],
             payment_amount=r['payment_amount'],
             payment_status=r['payment_status'],
-            remaining_debt=r['remaining_debt']
+            remaining_debt=r['remaining_debt'],
+            kod1=r.get('kod1', ''),
+            kod2=r.get('kod2', ''),
+            birim=r.get('birim', '')
         ) for r in records_data]
 
     def refresh_records(self):
@@ -98,7 +110,10 @@ class Creditor:
             description=record_data.description,
             debt_amount=record_data.debt_amount,
             payment_amount=record_data.payment_amount,
-            payment_status=record_data.payment_status
+            payment_status=record_data.payment_status,
+            kod1=record_data.kod1,
+            kod2=record_data.kod2,
+            birim=record_data.birim
         )
 
         if record_id:
@@ -147,7 +162,7 @@ class AddRecordDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Yeni Kayıt Ekle")
         self.setModal(True)
-        self.resize(450, 300)  # Dialog boyutu büyütüldü
+        self.resize(450, 450)  # Dialog boyutu büyütüldü
 
         layout = QFormLayout()
 
@@ -168,6 +183,27 @@ class AddRecordDialog(QDialog):
         self.description_edit.setFont(dialog_font)
         self.description_edit.setMinimumHeight(35)
         layout.addRow("Açıklama:", self.description_edit)
+
+        # Kod1 input
+        self.kod1_edit = QLineEdit()
+        self.kod1_edit.setFont(dialog_font)
+        self.kod1_edit.setMinimumHeight(35)
+        self.kod1_edit.setPlaceholderText("Ürün/Hizmet Kodu 1")
+        layout.addRow("Kod1:", self.kod1_edit)
+
+        # Kod2 input
+        self.kod2_edit = QLineEdit()
+        self.kod2_edit.setFont(dialog_font)
+        self.kod2_edit.setMinimumHeight(35)
+        self.kod2_edit.setPlaceholderText("Ürün/Hizmet Kodu 2")
+        layout.addRow("Kod2:", self.kod2_edit)
+
+        # Birim input
+        self.birim_edit = QLineEdit()
+        self.birim_edit.setFont(dialog_font)
+        self.birim_edit.setMinimumHeight(35)
+        self.birim_edit.setPlaceholderText("Adet, KG, M2 vb.")
+        layout.addRow("Birim:", self.birim_edit)
 
         # Record type
         self.record_type = QComboBox()
@@ -239,7 +275,10 @@ class AddRecordDialog(QDialog):
             description=description,
             debt_amount=debt_amount,
             payment_amount=payment_amount,
-            payment_status=status
+            payment_status=status,
+            kod1=self.kod1_edit.text().strip(),
+            kod2=self.kod2_edit.text().strip(),
+            birim=self.birim_edit.text().strip()
         )
 
 class CreditorDetailWidget(QWidget):
@@ -299,6 +338,12 @@ class CreditorDetailWidget(QWidget):
         export_pdf_btn.clicked.connect(self.export_to_pdf)
         button_layout.addWidget(export_pdf_btn)
 
+        receipt_btn = QPushButton("Fiş Çıktısı Al")
+        receipt_btn.setFont(button_font)
+        receipt_btn.setMinimumHeight(40)
+        receipt_btn.clicked.connect(self.export_receipt_for_record)
+        button_layout.addWidget(receipt_btn)
+
         backup_btn = QPushButton("Yedek Oluştur")
         backup_btn.setFont(button_font)
         backup_btn.setMinimumHeight(40)
@@ -316,10 +361,10 @@ class CreditorDetailWidget(QWidget):
 
         # Records table
         self.table = QTableWidget()
-        self.table.setColumnCount(6)
+        self.table.setColumnCount(9)
         self.table.setHorizontalHeaderLabels([
-            "Tarih", "Açıklama", "Borç Tutarı", "Ödeme Tutarı",
-            "Kalan Borç", "İşlem Türü"
+                 "Tarih", "Açıklama", "Kod1", "Kod2", "Birim",
+                 "Borç Tutarı", "Ödeme Tutarı", "Kalan Borç", "İşlem Türü"
         ])
 
         # Tablo başlık fontunu büyüt
@@ -369,7 +414,7 @@ class CreditorDetailWidget(QWidget):
                                f"Yedek oluşturulurken hata: {str(e)}")
 
     def update_total_debt_display(self):
-        """Toplam borç görüntüsünü güncelle"""
+        """Toplam bor���� görüntüsünü güncelle"""
         total = self.creditor.get_total_debt()
         color = "red" if total > 0 else "green"
         self.total_debt_label.setText(f"<span style='color: {color}'>Toplam Borç: ₺{total:.2f}</span>")
@@ -429,6 +474,75 @@ class CreditorDetailWidget(QWidget):
         dialog = QPrintDialog(printer, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.render_to_printer(printer)
+
+    def render_to_printer(self, printer):
+        """Yazıcıya render et"""
+        try:
+            # Basit bir HTML tablosu oluştur ve yazdır
+            from PyQt6.QtGui import QTextDocument
+            from PyQt6.QtPrintSupport import QPrinter
+
+            html_content = f"""
+            <html>
+            <head>
+                <style>
+                    body {{ font-family: Arial, sans-serif; font-size: 10pt; }}
+                    h1 {{ text-align: center; color: #333; }}
+                    table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
+                    th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                    th {{ background-color: #f2f2f2; font-weight: bold; }}
+                    .debt {{ color: red; }}
+                    .payment {{ color: green; }}
+                </style>
+            </head>
+            <body>
+                <h1>{self.creditor.name} - Veresiye Defteri</h1>
+                <p><strong>Toplam Borç:</strong> ₺{self.creditor.get_total_debt():.2f}</p>
+                <table>
+                    <tr>
+                        <th>Tarih</th>
+                        <th>Açıklama</th>
+                        <th>Kod1</th>
+                        <th>Kod2</th>
+                        <th>Birim</th>
+                        <th>Borç</th>
+                        <th>Ödeme</th>
+                        <th>Kalan</th>
+                        <th>İşlem</th>
+                    </tr>
+            """
+
+            for record in self.creditor.records:
+                debt_class = "debt" if record.debt_amount > 0 else ""
+                payment_class = "payment" if record.payment_amount > 0 else ""
+
+                html_content += f"""
+                    <tr>
+                        <td>{record.date}</td>
+                        <td>{record.description}</td>
+                        <td>{record.kod1}</td>
+                        <td>{record.kod2}</td>
+                        <td>{record.birim}</td>
+                        <td class="{debt_class}">₺{record.debt_amount:.2f}</td>
+                        <td class="{payment_class}">₺{record.payment_amount:.2f}</td>
+                        <td>₺{record.remaining_debt:.2f}</td>
+                        <td>{record.payment_status}</td>
+                    </tr>
+                """
+
+            html_content += """
+                </table>
+            </body>
+            </html>
+            """
+
+            document = QTextDocument()
+            document.setHtml(html_content)
+            document.print(printer)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Yazdırma Hatası",
+                               f"Yazdırma sırasında hata oluştu: {str(e)}")
 
     def export_to_pdf(self):
         """Borçlunun defterini PDF'ye aktar"""
@@ -509,429 +623,508 @@ class CreditorDetailWidget(QWidget):
 
         c.save()
 
-    def render_to_printer(self, printer):
-        """Defteri yazıcıya gönder"""
-        # This is a simplified version - in a real application,
-        # you might want to use QPainter for more sophisticated printing
-        pass
+    def create_receipt_pdf(self, record, receipt_number=None):
+        """Tek bir kayıt için fiş formatında PDF oluştur"""
+        from datetime import datetime
+
+        # Fiş numarası oluştur
+        if not receipt_number:
+            receipt_number = f"B{record.id:011d}"
+
+        filename = f"fis_{receipt_number}_{self.creditor.name}.pdf"
+        filepath = os.path.join(os.path.expanduser("~"), "Desktop", filename)
+
+        c = canvas.Canvas(filepath, pagesize=letter)
+        width, height = letter
+
+        # Font ayarları
+        try:
+            fonts_dir = os.path.join(os.path.dirname(__file__), 'fonts')
+            if os.path.exists(os.path.join(fonts_dir, 'Roboto-Regular.ttf')):
+                pdfmetrics.registerFont(TTFont('Roboto', os.path.join(fonts_dir, 'Roboto-Regular.ttf')))
+                pdfmetrics.registerFont(TTFont('Roboto-Bold', os.path.join(fonts_dir, 'Roboto-Bold.ttf')))
+                addMapping('Roboto', 0, 0, 'Roboto')
+                addMapping('Roboto', 1, 0, 'Roboto-Bold')
+                title_font = 'Roboto-Bold'
+                regular_font = 'Roboto'
+            else:
+                fallback_fonts = ['NotoSans-Regular.ttf', 'Arial.ttf', 'Calibri.ttf', 'Tahoma.ttf', 'Verdana.ttf', 'SegoeUI.ttf']
+                for fname in fallback_fonts:
+                    path = os.path.join(fonts_dir, fname)
+                    if os.path.exists(path):
+                        font_name = os.path.splitext(fname)[0].replace('-Regular', '').replace('-Bold', '')
+                        pdfmetrics.registerFont(TTFont(font_name, path))
+                        title_font = font_name
+                        regular_font = font_name
+                        break
+                else:
+                    raise Exception("Local fonts not found")
+        except Exception as e:
+            print(f"⚠️ Font yükleme hatası: {e}")
+            title_font = 'Helvetica-Bold'
+            regular_font = 'Helvetica'
+
+        # Başlık Bilgileri
+        c.setFont(title_font, 18)
+        c.drawCentredString(width/2, height - 50, "GÜRBİLEK OTO TAMİR")
+
+        # Fiş bilgileri
+        c.setFont(regular_font, 12)
+        c.drawString(50, height - 90, f"Fiş No: {receipt_number}")
+
+        # Tarih formatını düzelt (YYYY-MM-DD -> DD.MM.YYYY)
+        try:
+            date_obj = datetime.strptime(record.date, '%Y-%m-%d')
+            formatted_date = date_obj.strftime('%d.%m.%Y')
+        except:
+            formatted_date = record.date
+
+        c.drawString(400, height - 90, f"Tarih: {formatted_date}")
+        c.drawString(50, height - 110, f"Müşteri: {self.creditor.name}")
+
+        # Tablo başlıkları
+        table_start_y = height - 160
+        c.setFont(title_font, 10)
+
+        # Tablo çizgilerini çiz
+        c.line(50, table_start_y, width - 50, table_start_y)  # Üst çizgi
+        c.line(50, table_start_y - 20, width - 50, table_start_y - 20)  # Başlık alt çizgisi
+
+        # Dikey çizgiler
+        col_positions = [50, 150, 220, 290, 360, 450, width - 50]
+        for x in col_positions:
+            c.line(x, table_start_y, x, table_start_y - 60)
+
+        # Başlık metinleri
+        headers = ["Cinsi", "Kod1", "Kod2", "Miktar", "Birim", "Tutar"]
+        header_x_positions = [60, 160, 230, 300, 370, 460]
+
+        for i, header in enumerate(headers):
+            c.drawString(header_x_positions[i], table_start_y - 15, header)
+
+        # Kayıt verilerini yazdır
+        c.setFont(regular_font, 9)
+        data_y = table_start_y - 35
+
+        # Miktar bilgisi (borç kaydı ise 1, ödeme ise 0 olarak göster)
+        if record.debt_amount > 0:
+            miktar = "1"
+            tutar = record.debt_amount
+        else:
+            miktar = "-"
+            tutar = record.payment_amount
+        birim = record.birim if record.birim else "Adet"
+        tutar = record.debt_amount if record.debt_amount > 0 else record.payment_amount
+
+        row_data = [
+            record.description[:15],  # Cinsi (kısalt)
+            record.kod1[:8] if record.kod1 else "",  # Kod1
+            record.kod2[:8] if record.kod2 else "",  # Kod2
+            miktar,  # Miktar
+            birim[:8],  # Birim
+            f"₺{tutar:.2f}"  # Tutar
+        ]
+
+        for i, data in enumerate(row_data):
+            c.drawString(header_x_positions[i], data_y, str(data))
+
+        # Alt çizgi
+        c.line(50, table_start_y - 60, width - 50, table_start_y - 60)
+
+        # Alt Bilgiler
+        c.setFont(regular_font, 10)
+        bottom_y = table_start_y - 100
+
+        # Hesaplamalar
+        ara_toplam = tutar
+        iskonto = 0.0
+        musteri_masrafi = 0.0
+        genel_toplam = ara_toplam - iskonto + musteri_masrafi
+
+        # Önceki bakiye hesapla (bu kayıttan önceki kalan borç)
+        onceki_bakiye = record.remaining_debt - record.debt_amount + record.payment_amount
+        yeni_bakiye = record.remaining_debt
+
+        c.drawString(400, bottom_y, f"Ara Toplam: ₺{ara_toplam:.2f}")
+        c.drawString(400, bottom_y - 20, f"İskonto Toplamı: ₺{iskonto:.2f}")
+        c.drawString(400, bottom_y - 40, f"Müşteri Masrafı: ₺{musteri_masrafi:.2f}")
+        c.drawString(400, bottom_y - 60, f"Genel Toplam: ₺{genel_toplam:.2f}")
+
+        # Yeni bakiye bilgisi
+        c.setFont(title_font, 12)
+        bakiye_renk = "Alacak" if yeni_bakiye > 0 else "Bakiye Sıfır" if yeni_bakiye == 0 else "Borç"
+        c.drawString(400, bottom_y - 90, f"Yeni Bakiye: ₺{abs(yeni_bakiye):.2f} ({bakiye_renk})")
+
+        # Alt bilgi
+        c.setFont(regular_font, 8)
+        c.drawString(50, 50, f"Bu fiş {datetime.now().strftime('%d.%m.%Y %H:%M')} tarihinde oluşturulmuştur.")
+
+        c.save()
+        return filepath
+
+    def export_receipt_for_record(self):
+        """Seçili kayıt için fiş çıktısı al"""
+        current_row = self.table.currentRow()
+        if current_row < 0:
+            QMessageBox.warning(self, "Seçim Hatası", "Lütfen fiş çıktısı almak istediğiniz kaydı seçin!")
+            return
+
+        if current_row >= len(self.creditor.records):
+            QMessageBox.warning(self, "Hata", "Geçersiz kayıt seçimi!")
+            return
+
+        record = self.creditor.records[current_row]
+
+        try:
+            filepath = self.create_receipt_pdf(record)
+            QMessageBox.information(self, "Fiş Oluşturuldu",
+                                  f"Fiş başarıyla oluşturuldu: {filepath}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fiş Oluşturma Hatası",
+                               f"Fiş oluşturulurken hata: {str(e)}")
 
 class DatabaseSettingsDialog(QDialog):
-    """Veritabanı ayarları ve temizlik dialog'u"""
+    """Veritabanı ayarları ve yönetimi dialog'u"""
     def __init__(self, db_manager, parent=None):
         super().__init__(parent)
         self.db_manager = db_manager
-        self.setWindowTitle("Veritabanı Ayarları ve Temizlik")
+        self.setWindowTitle("Veritabanı Ayarları")
         self.setModal(True)
-        self.resize(500, 400)
+        self.resize(600, 500)
+
+        # Dialog fontunu ayarla
+        dialog_font = QFont("Arial", 12)
+        self.setFont(dialog_font)
+
         self.setup_ui()
-        self.load_stats()
+        self.update_stats()
 
     def setup_ui(self):
         layout = QVBoxLayout()
 
+        # Başlık
+        title = QLabel("Veritabanı Yönetimi")
+        title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+
         # İstatistikler grubu
         stats_group = QGroupBox("Veritabanı İstatistikleri")
-        stats_layout = QFormLayout()
+        stats_layout = QVBoxLayout()
 
-        self.creditor_count_label = QLabel()
-        self.record_count_label = QLabel()
-        self.oldest_date_label = QLabel()
-        self.newest_date_label = QLabel()
-        self.db_size_label = QLabel()
-        self.backup_count_label = QLabel()
-
-        stats_layout.addRow("Toplam Borçlu Sayısı:", self.creditor_count_label)
-        stats_layout.addRow("Toplam Kayıt Sayısı:", self.record_count_label)
-        stats_layout.addRow("En Eski Kayıt:", self.oldest_date_label)
-        stats_layout.addRow("En Yeni Kayıt:", self.newest_date_label)
-        stats_layout.addRow("Veritabanı Boyutu:", self.db_size_label)
-        stats_layout.addRow("Yedek Sayısı:", self.backup_count_label)
+        self.stats_label = QLabel()
+        self.stats_label.setWordWrap(True)
+        stats_layout.addWidget(self.stats_label)
 
         stats_group.setLayout(stats_layout)
         layout.addWidget(stats_group)
 
-        # Temizlik grubu
-        cleanup_group = QGroupBox("Temizlik Ayarları")
-        cleanup_layout = QVBoxLayout()
-
-        # Eski kayıtları temizle
-        records_layout = QHBoxLayout()
-        records_layout.addWidget(QLabel("Eski kayıtları temizle (günden eski):"))
-        self.keep_days_spin = QSpinBox()
-        self.keep_days_spin.setRange(30, 3650)  # 1 ay ile 10 yıl arası
-        self.keep_days_spin.setValue(365)  # Varsayılan 1 yıl
-        self.keep_days_spin.setSuffix(" gün")
-        records_layout.addWidget(self.keep_days_spin)
-
-        cleanup_records_btn = QPushButton("Eski Kayıtları Temizle")
-        cleanup_records_btn.clicked.connect(self.cleanup_old_records)
-        records_layout.addWidget(cleanup_records_btn)
-
-        cleanup_layout.addLayout(records_layout)
-
-        # Yedek dosyalarını temizle
-        backup_layout = QHBoxLayout()
-        backup_layout.addWidget(QLabel("Tutulacak yedek sayısı:"))
-        self.keep_backups_spin = QSpinBox()
-        self.keep_backups_spin.setRange(5, 50)
-        self.keep_backups_spin.setValue(10)
-        self.keep_backups_spin.setSuffix(" adet")
-        backup_layout.addWidget(self.keep_backups_spin)
-
-        cleanup_backups_btn = QPushButton("Eski Yedekleri Temizle")
-        cleanup_backups_btn.clicked.connect(self.cleanup_old_backups)
-        backup_layout.addWidget(cleanup_backups_btn)
-
-        cleanup_layout.addLayout(backup_layout)
-
-        cleanup_group.setLayout(cleanup_layout)
-        layout.addWidget(cleanup_group)
-
         # Yedekleme grubu
         backup_group = QGroupBox("Yedekleme İşlemleri")
-        backup_layout = QHBoxLayout()
+        backup_layout = QVBoxLayout()
 
-        create_backup_btn = QPushButton("Manuel Yedek Oluştur")
-        create_backup_btn.clicked.connect(self.create_manual_backup)
-        backup_layout.addWidget(create_backup_btn)
+        # Manuel yedek oluştur
+        manual_backup_btn = QPushButton("Manuel Yedek Oluştur")
+        manual_backup_btn.setMinimumHeight(35)
+        manual_backup_btn.clicked.connect(self.create_manual_backup)
+        backup_layout.addWidget(manual_backup_btn)
 
-        refresh_stats_btn = QPushButton("İstatistikleri Yenile")
-        refresh_stats_btn.clicked.connect(self.load_stats)
-        backup_layout.addWidget(refresh_stats_btn)
+        # Eski yedekleri temizle
+        cleanup_backups_layout = QHBoxLayout()
+        cleanup_backups_btn = QPushButton("Eski Yedekleri Temizle")
+        cleanup_backups_btn.setMinimumHeight(35)
+        cleanup_backups_btn.clicked.connect(self.cleanup_old_backups)
+        cleanup_backups_layout.addWidget(cleanup_backups_btn)
 
+        self.backup_count_spin = QSpinBox()
+        self.backup_count_spin.setMinimum(1)
+        self.backup_count_spin.setMaximum(100)
+        self.backup_count_spin.setValue(10)
+        self.backup_count_spin.setSuffix(" adet sakla")
+        cleanup_backups_layout.addWidget(self.backup_count_spin)
+
+        backup_layout.addLayout(cleanup_backups_layout)
         backup_group.setLayout(backup_layout)
         layout.addWidget(backup_group)
 
-        # Butonlar
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(self.accept)
-        layout.addWidget(buttons)
+        # Temizlik grubu
+        cleanup_group = QGroupBox("Veritabanı Temizliği")
+        cleanup_layout = QVBoxLayout()
+
+        # Eski kayıtları temizle
+        cleanup_records_layout = QHBoxLayout()
+        cleanup_records_btn = QPushButton("Eski Kayıtları Temizle")
+        cleanup_records_btn.setMinimumHeight(35)
+        cleanup_records_btn.clicked.connect(self.cleanup_old_records)
+        cleanup_records_layout.addWidget(cleanup_records_btn)
+
+        self.days_spin = QSpinBox()
+        self.days_spin.setMinimum(30)
+        self.days_spin.setMaximum(3650)
+        self.days_spin.setValue(365)
+        self.days_spin.setSuffix(" günden eski")
+        cleanup_records_layout.addWidget(self.days_spin)
+
+        cleanup_layout.addLayout(cleanup_records_layout)
+        cleanup_group.setLayout(cleanup_layout)
+        layout.addWidget(cleanup_group)
+
+        # JSON dışa aktarma
+        export_group = QGroupBox("Dışa Aktarma")
+        export_layout = QVBoxLayout()
+
+        export_json_btn = QPushButton("Verileri JSON'a Aktar")
+        export_json_btn.setMinimumHeight(35)
+        export_json_btn.clicked.connect(self.export_to_json)
+        export_layout.addWidget(export_json_btn)
+
+        export_group.setLayout(export_layout)
+        layout.addWidget(export_group)
+
+        # İstatistikleri yenile butonu
+        refresh_btn = QPushButton("İstatistikleri Yenile")
+        refresh_btn.setMinimumHeight(35)
+        refresh_btn.clicked.connect(self.update_stats)
+        layout.addWidget(refresh_btn)
+
+        # Kapat butonu
+        close_btn = QPushButton("Kapat")
+        close_btn.setMinimumHeight(35)
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
 
         self.setLayout(layout)
 
-    def load_stats(self):
-        """İstatistikleri yükle"""
-        stats = self.db_manager.get_database_stats()
-        if stats:
-            self.creditor_count_label.setText(str(stats['creditor_count']))
-            self.record_count_label.setText(str(stats['record_count']))
-            self.oldest_date_label.setText(stats['oldest_date'] or "Kayıt yok")
-            self.newest_date_label.setText(stats['newest_date'] or "Kayıt yok")
-            self.db_size_label.setText(f"{stats['db_size_mb']:.2f} MB")
-            self.backup_count_label.setText(str(stats['backup_count']))
-        else:
-            # Hata durumunda varsayılan değerler
-            for label in [self.creditor_count_label, self.record_count_label,
-                         self.oldest_date_label, self.newest_date_label,
-                         self.db_size_label, self.backup_count_label]:
-                label.setText("Hata")
+    def update_stats(self):
+        """Veritabanı istatistiklerini güncelle"""
+        try:
+            stats = self.db_manager.get_database_stats()
+            stats_text = f"""
+Toplam Borçlu Sayısı: {stats['creditor_count']}
+Toplam Kayıt Sayısı: {stats['record_count']}
+Toplam Borç: ₺{stats['total_debt']:.2f}
+Toplam Ödeme: ₺{stats['total_payment']:.2f}
+Net Bakiye: ₺{stats['net_balance']:.2f}
 
-    def cleanup_old_records(self):
-        """Eski kayıtları temizle"""
-        keep_days = self.keep_days_spin.value()
-
-        reply = QMessageBox.question(
-            self, "Eski Kayıtları Temizle",
-            f"{keep_days} günden eski tüm kayıtlar silinecek!\n\n"
-            "Bu işlem geri alınamaz. Devam edilsin mi?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
-            try:
-                deleted_count = self.db_manager.cleanup_old_records(keep_days)
-                if deleted_count > 0:
-                    QMessageBox.information(
-                        self, "Temizlik Tamamlandı",
-                        f"{deleted_count} eski kayıt başarıyla silindi!"
-                    )
-                else:
-                    QMessageBox.information(
-                        self, "Temizlik Tamamlandı",
-                        "Silinecek eski kayıt bulunamadı."
-                    )
-                self.load_stats()  # İstatistikleri güncelle
-            except Exception as e:
-                QMessageBox.critical(
-                    self, "Temizlik Hatası",
-                    f"Eski kayıtlar temizlenirken hata oluştu: {str(e)}"
-                )
-
-    def cleanup_old_backups(self):
-        """Eski yedekleri temizle"""
-        keep_count = self.keep_backups_spin.value()
-
-        reply = QMessageBox.question(
-            self, "Eski Yedekleri Temizle",
-            f"En son {keep_count} yedek hariç tüm eski yedekler silinecek!\n\n"
-            "Devam edilsin mi?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
-            try:
-                self.db_manager.cleanup_old_backups(keep_count)
-                QMessageBox.information(
-                    self, "Temizlik Tamamlandı",
-                    "Eski yedekler başarıyla temizlendi!"
-                )
-                self.load_stats()  # İstatistikleri güncelle
-            except Exception as e:
-                QMessageBox.critical(
-                    self, "Temizlik Hatası",
-                    f"Eski yedekler temizlenirken hata oluştu: {str(e)}"
-                )
+Veritabanı Boyutu: {stats['db_size_mb']:.2f} MB
+Son Güncelleme: {datetime.now().strftime('%d.%m.%Y %H:%M')}
+            """.strip()
+            self.stats_label.setText(stats_text)
+        except Exception as e:
+            self.stats_label.setText(f"İstatistik yüklenirken hata: {str(e)}")
 
     def create_manual_backup(self):
         """Manuel yedek oluştur"""
         try:
-            backup_path = self.db_manager.create_backup("manual_settings")
+            backup_path = self.db_manager.create_backup("manual")
             if backup_path:
-                QMessageBox.information(
-                    self, "Yedekleme Başarılı",
-                    "Manuel yedek başarıyla oluşturuldu!"
-                )
-                self.load_stats()  # İstatistikleri güncelle
+                QMessageBox.information(self, "Yedekleme Başarılı",
+                                      f"Yedek başarıyla oluşturuldu!\n\n{backup_path}")
+                self.update_stats()
             else:
-                QMessageBox.warning(
-                    self, "Yedekleme Hatası",
-                    "Yedek oluşturulamadı!"
-                )
+                QMessageBox.warning(self, "Yedekleme Hatası",
+                                  "Yedek oluşturulamadı!")
         except Exception as e:
-            QMessageBox.critical(
-                self, "Yedekleme Hatası",
-                f"Yedek oluşturulurken hata: {str(e)}"
-            )
+            QMessageBox.critical(self, "Yedekleme Hatası",
+                               f"Yedek oluşturulurken hata: {str(e)}")
+
+    def cleanup_old_backups(self):
+        """Eski yedekleri temizle"""
+        keep_count = self.backup_count_spin.value()
+        reply = QMessageBox.question(self, "Yedek Temizliği",
+                                   f"En son {keep_count} yedek hariç diğerleri silinecek.\n"
+                                   "Devam etmek istiyor musunuz?",
+                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                deleted_count = self.db_manager.cleanup_old_backups(keep_count)
+                QMessageBox.information(self, "Temizlik Tamamlandı",
+                                      f"{deleted_count} eski yedek dosyası silindi.")
+                self.update_stats()
+            except Exception as e:
+                QMessageBox.critical(self, "Temizlik Hatası",
+                                   f"Yedek temizliği sırasında hata: {str(e)}")
+
+    def cleanup_old_records(self):
+        """Eski kayıtları temizle"""
+        keep_days = self.days_spin.value()
+        cutoff_date = datetime.now() - timedelta(days=keep_days)
+
+        reply = QMessageBox.question(self, "Kayıt Temizliği",
+                                   f"{cutoff_date.strftime('%d.%m.%Y')} tarihinden önceki kayıtlar silinecek.\n"
+                                   "Bu işlem geri alınamaz!\n\n"
+                                   "Devam etmek istiyor musunuz?",
+                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                # Önce yedek oluştur
+                backup_path = self.db_manager.create_backup("before_cleanup")
+                if not backup_path:
+                    QMessageBox.warning(self, "Yedekleme Hatası",
+                                      "Güvenlik yedeği oluşturulamadı! İşlem iptal edildi.")
+                    return
+
+                deleted_count = self.db_manager.cleanup_old_records(keep_days)
+                QMessageBox.information(self, "Temizlik Tamamlandı",
+                                      f"{deleted_count} eski kayıt silindi.\n"
+                                      f"Güvenlik yedeği: {backup_path}")
+                self.update_stats()
+            except Exception as e:
+                QMessageBox.critical(self, "Temizlik Hatası",
+                                   f"Kayıt temizliği sırasında hata: {str(e)}")
+
+    def export_to_json(self):
+        """Verileri JSON formatında dışa aktar"""
+        try:
+            filename = f"veresiye_defteri_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            filepath = os.path.join(os.path.expanduser("~"), "Desktop", filename)
+
+            self.db_manager.export_to_json(filepath)
+            QMessageBox.information(self, "Dışa Aktarma Başarılı",
+                                  f"Veriler başarıyla dışa aktarıldı:\n\n{filepath}")
+        except Exception as e:
+            QMessageBox.critical(self, "Dışa Aktarma Hatası",
+                               f"JSON dışa aktarma sırasında hata: {str(e)}")
 
 class DebtLedgerApp(QMainWindow):
-    """Ana uygulama penceresi"""
     def __init__(self):
         super().__init__()
-
-        # Veritabanı yöneticisini başlat ve fontları hazırla
         self.db_manager = DatabaseManager()
         FontDownloader().setup_fonts()
 
-        # Eski JSON dosyasından geçiş yap
-        self.migrate_from_old_format()
-
-        self.setWindowTitle("Veresiye Defteri Uygulaması - Veritabanı Destekli")
-        self.setGeometry(100, 100, 1200, 800)
+        self.setWindowTitle("Veresiye Defteri Uygulaması")
+        self.setGeometry(100, 100, 1300, 900)
 
         self.setup_ui()
         self.update_creditor_list()
 
-    def migrate_from_old_format(self):
-        """Eski JSON formatından veritabanına geçiş"""
-        old_json_file = "debt_ledger_data.json"
-        if os.path.exists(old_json_file):
-            reply = QMessageBox.question(
-                self, "Veri Geçişi",
-                "Eski JSON formatında veriler bulundu. Veritabanına aktarılsın mı?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-
-            if reply == QMessageBox.StandardButton.Yes:
-                if self.db_manager.migrate_from_json(old_json_file):
-                    # Eski dosyayı yedekle ve sil
-                    backup_name = f"debt_ledger_data_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                    os.rename(old_json_file, backup_name)
-                    QMessageBox.information(self, "Geçiş Tamamlandı",
-                                          f"Veriler başarıyla aktarıldı! Eski dosya '{backup_name}' olarak yedeklendi.")
-                else:
-                    QMessageBox.warning(self, "Geçiş Hatası", "Veri geçişi sırasında hata oluştu!")
-
+    # ---------- YARDIMCI METOTLAR ----------
+    # DebtLedgerApp i��inde  ───────────────────────────────────────────────���
     def setup_ui(self):
-        """Kullanıcı arayüzünü ayarla"""
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
+        """Sol panel (butonlar + liste) ve sağ panel (stacked widget)"""
+        central = QWidget();
+        layout = QHBoxLayout(central)
 
-        layout = QHBoxLayout()
-
-        # Left panel - creditor list
+        # --- Sol panel ---
         left_panel = QWidget()
-        left_panel.setMaximumWidth(350)  # Genişlik artırıldı
-        left_layout = QVBoxLayout()
+        left_layout = QVBoxLayout(left_panel)
 
-        # Title
         title = QLabel("Borçlular")
-        title.setFont(QFont("Arial", 18, QFont.Weight.Bold))  # 14'ten 18'e çıkarıldı
+        title.setFont(QFont("Arial", 18, QFont.Weight.Bold))
         left_layout.addWidget(title)
 
-        # Sol panel butonları için font
-        left_button_font = QFont("Arial", 12)
+        btn_font = QFont("Arial", 12)
 
-        # Add creditor button
-        add_creditor_btn = QPushButton("Yeni Borçlu Ekle")
-        add_creditor_btn.setFont(left_button_font)
-        add_creditor_btn.setMinimumHeight(45)  # Yükseklik artırıldı
-        add_creditor_btn.clicked.connect(self.add_creditor)
-        left_layout.addWidget(add_creditor_btn)
+        # Yeni borçlu ekle
+        add_btn = QPushButton("Yeni Borçlu Ekle")
+        add_btn.setFont(btn_font);
+        add_btn.setMinimumHeight(40)
+        add_btn.clicked.connect(self.add_creditor)
+        left_layout.addWidget(add_btn)
 
-        # Creditor list
+        # Borçlu listesi
         self.creditor_list = QListWidget()
-        # Liste fontunu büyüt
-        list_font = QFont("Arial", 12)
-        self.creditor_list.setFont(list_font)
-        # Liste item yüksekliğini artır
-        self.creditor_list.setStyleSheet("QListWidget::item { padding: 8px; }")
+        self.creditor_list.setFont(QFont("Arial", 12))
+        self.creditor_list.setStyleSheet("QListWidget::item { padding: 6px }")
         self.creditor_list.itemDoubleClicked.connect(self.show_creditor_details)
-        left_layout.addWidget(self.creditor_list)
+        left_layout.addWidget(self.creditor_list, 1)  # stretch
 
-        # Delete creditor button
-        delete_creditor_btn = QPushButton("Seçili Borçluyu Sil")
-        delete_creditor_btn.setFont(left_button_font)
-        delete_creditor_btn.setMinimumHeight(45)
-        delete_creditor_btn.clicked.connect(self.delete_creditor)
-        left_layout.addWidget(delete_creditor_btn)
+        # Seçili borçluyu sil
+        del_btn = QPushButton("Seçili Borçluyu Sil")
+        del_btn.setFont(btn_font);
+        del_btn.setMinimumHeight(40)
+        del_btn.clicked.connect(self.delete_creditor)
+        left_layout.addWidget(del_btn)
 
         # Spacer
         left_layout.addStretch()
 
-        # Database settings button
-        db_settings_btn = QPushButton("Veritabanı Ayarları")
-        db_settings_btn.setFont(left_button_font)
-        db_settings_btn.setMinimumHeight(45)
-        db_settings_btn.clicked.connect(self.show_database_settings)
-        left_layout.addWidget(db_settings_btn)
+        # Veritabanı ayarları (yedek, temizlik)
+        db_btn = QPushButton("Veritabanı Ayarları")
+        db_btn.setFont(btn_font);
+        db_btn.setMinimumHeight(40)
+        db_btn.clicked.connect(self.show_database_settings)
+        left_layout.addWidget(db_btn)
 
-        left_panel.setLayout(left_layout)
-        layout.addWidget(left_panel)
+        layout.addWidget(left_panel, 0)  # sabit genişlik
 
-        # Right panel - stacked widget for different views
+        # --- Sağ panel (stacked widget) ---
         self.stacked_widget = QStackedWidget()
-
-        # Main page
         main_page = QWidget()
-        main_layout = QVBoxLayout()
-        welcome_label = QLabel("Veresiye Defteri'ne Hoş Geldiniz")
-        welcome_label.setFont(QFont("Arial", 24))  # 18'den 24'e çıkarıldı
-        welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        main_layout.addWidget(welcome_label)
+        v = QVBoxLayout(main_page)
+        welcome = QLabel("Veresiye Defteri'ne Hoş Geldiniz")
+        welcome.setFont(QFont("Arial", 24));
+        welcome.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(welcome)
+        info = QLabel("• Soldan borçlu ekleyin / seçin\n• Çift tıklayarak detaylara gidin")
+        info.setFont(QFont("Arial", 14));
+        info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(info);
+        v.addStretch()
+        self.stacked_widget.addWidget(main_page)  # index 0
+        layout.addWidget(self.stacked_widget, 1)
 
-        instructions = QLabel(
-            "Kullanım Talimatları:\n"
-            "• Bir borçlunun detaylarını görmek için çift tıklayın\n"
-            "• Yeni borçlu eklemek için 'Yeni Borçlu Ekle' butonunu kullanın\n"
-            "• Borçlu detaylarında borç ve ödeme ekleyebilirsiniz\n"
-            "• Defterleri PDF'ye aktarabilir veya yazdırabilirsiniz"
-        )
-        instructions.setFont(QFont("Arial", 14))  # Talimatlar için font eklendi
-        instructions.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        main_layout.addWidget(instructions)
-        main_layout.addStretch()
+        self.setCentralWidget(central)
 
-        main_page.setLayout(main_layout)
-        self.stacked_widget.addWidget(main_page)
+    # ──────────────────────────────────────────────────────────────────────
 
-        layout.addWidget(self.stacked_widget)
-        central_widget.setLayout(layout)
-
+    # Yardımcı metotlar  (aynı sınıfa ekle) ───────────────────────────────
     def add_creditor(self):
-        """Yeni borçlu ekle"""
         name, ok = QInputDialog.getText(self, "Borçlu Ekle", "Borçlu adını girin:")
         if ok and name.strip():
-            creditor_id = self.db_manager.add_creditor(name.strip())
-
-            if creditor_id:
+            if self.db_manager.add_creditor(name.strip()):
                 self.update_creditor_list()
-                QMessageBox.information(self, "Başarılı", f"'{name.strip()}' başarıyla eklendi!")
             else:
-                QMessageBox.warning(self, "Hata",
-                                  "Bu isimde bir borçlu zaten mevcut veya ekleme sırasında hata oluştu!")
+                QMessageBox.warning(self, "Hata", "Bu isimde borçlu zaten var!")
 
     def delete_creditor(self):
-        """Seçili borçluyu sil"""
-        current_item = self.creditor_list.currentItem()
-        if current_item:
-            # Borçlu adını al (format: "Ad - ₺tutar - durum")
-            creditor_name = current_item.text().split(" - ")[0]
-
-            reply = QMessageBox.question(
+        item = self.creditor_list.currentItem()
+        if not item: return
+        name = item.text().split(" - ")[0]
+        if QMessageBox.question(
                 self, "Borçlu Sil",
-                f"'{creditor_name}' ve tüm kayıtlarını silmek istediğinizden emin misiniz?\n\n"
-                "Bu işlem geri alınamaz!",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
+                f"'{name}' ve tüm kayıtlarını silmek istediğinizden emin misiniz?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
 
-            if reply == QMessageBox.StandardButton.Yes:
-                # Borçlu ID'sini bul
-                creditor_data = self.db_manager.get_creditor_by_name(creditor_name)
-                if creditor_data:
-                    success = self.db_manager.delete_creditor(creditor_data['id'])
-                    if success:
-                        self.update_creditor_list()
-                        self.show_main_page()
-                        QMessageBox.information(self, "Başarılı", f"'{creditor_name}' başarıyla silindi!")
-                    else:
-                        QMessageBox.critical(self, "Hata", "Borçlu silinirken hata oluştu!")
-
-    def update_creditor_list(self):
-        """Borçlu listesi görüntüsünü güncelle"""
-        self.creditor_list.clear()
-
-        creditors_data = self.db_manager.get_all_creditors()
-
-        for creditor_data in creditors_data:
-            total_debt = creditor_data['total_debt']
-            record_count = creditor_data['record_count']
-
-            # Son ödeme durumunu belirle
-            if record_count == 0:
-                last_payment_status = "Kayıt yok"
-            else:
-                # Veritabanından son ödeme durumunu al
-                creditor = Creditor(creditor_data['id'], creditor_data['name'], self.db_manager)
-                last_payment_status = creditor.get_last_payment_status()
-
-            item_text = f"{creditor_data['name']} - ₺{total_debt:.2f} - {last_payment_status}"
-            self.creditor_list.addItem(item_text)
-
-    def show_creditor_details(self, item):
-        """Seçili borçlunun detaylarını göster"""
-        creditor_name = item.text().split(" - ")[0]
-
-        # Veritabanından borçlu bilgilerini al
-        creditor_data = self.db_manager.get_creditor_by_name(creditor_name)
-
-        if creditor_data:
-            # Remove existing creditor detail widgets
-            while self.stacked_widget.count() > 1:
-                widget = self.stacked_widget.widget(1)
-                self.stacked_widget.removeWidget(widget)
-                widget.deleteLater()
-
-            # Add new creditor detail widget
-            creditor = Creditor(creditor_data['id'], creditor_data['name'], self.db_manager)
-            detail_widget = CreditorDetailWidget(creditor, self)
-            self.stacked_widget.addWidget(detail_widget)
-            self.stacked_widget.setCurrentWidget(detail_widget)
-
-    def show_main_page(self):
-        """Ana sayfayı göster"""
-        self.stacked_widget.setCurrentIndex(0)
+            data = self.db_manager.get_creditor_by_name(name)
+            if data and self.db_manager.delete_creditor(data['id']):
+                self.update_creditor_list()
+                self.show_main_page()
 
     def show_database_settings(self):
-        """Veritabanı ayarları dialog'unu göster"""
-        dialog = DatabaseSettingsDialog(self.db_manager, self)
-        dialog.exec()
-        # Dialog kapatıldıktan sonra borçlu listesini güncelle
+        dlg = DatabaseSettingsDialog(self.db_manager, self)
+        dlg.exec()
         self.update_creditor_list()
 
-    def closeEvent(self, event):
-        """Uygulama kapatma olayını işle"""
-        # Kapanırken otomatik yedek oluştur
-        try:
-            self.db_manager.create_backup("app_close")
-        except Exception as e:
-            print(f"Kapanış yedeği oluşturulamadı: {e}")
+    # ─────────────────────────────────────────────────────────────────────
 
-        event.accept()
+    def update_creditor_list(self):
+        self.creditor_list.clear()
+        for c in self.db_manager.get_all_creditors():
+            total = c["total_debt"]
+            self.creditor_list.addItem(f"{c['name']} - ₺{total:.2f}")
 
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    # Use a font with Turkish character support on Windows
-    app.setFont(QFont("Segoe UI", 12))
-    window = DebtLedgerApp()
-    window.show()
-    sys.exit(app.exec())
+    def show_creditor_details(self, item):
+        # Borçlu adı, listede "Ad - ₺tutar" formatında → adı al
+        creditor_name = item.text().split(" - ")[0]
+        creditor_data = self.db_manager.get_creditor_by_name(creditor_name)
+        if not creditor_data:
+            QMessageBox.warning(self, "Hata", "Borçlu bulunamadı!")
+            return
+
+        # Daha önce eklenmiş detay sayfasını temizle
+        while self.stacked_widget.count() > 1:
+            old = self.stacked_widget.widget(1)
+            self.stacked_widget.removeWidget(old)
+            old.deleteLater()
+
+        # Yeni detay sayfasını ekle
+        creditor = Creditor(creditor_data["id"], creditor_data["name"], self.db_manager)
+        detail_widget = CreditorDetailWidget(creditor, self)
+        self.stacked_widget.addWidget(detail_widget)
+        self.stacked_widget.setCurrentWidget(detail_widget)
+
+    def show_main_page(self):
+        self.stacked_widget.setCurrentIndex(0)

@@ -77,11 +77,14 @@ class DatabaseManager:
                     debt_amount REAL DEFAULT 0.0,
                     payment_amount REAL DEFAULT 0.0,
                     payment_status TEXT DEFAULT 'Ödenmedi',
+                    kod1 TEXT DEFAULT '',
+                    kod2 TEXT DEFAULT '',
+                    birim TEXT DEFAULT '',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (creditor_id) REFERENCES creditors (id) ON DELETE CASCADE
                 )
             ''')
-            
+
             # İndeksler oluştur
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_creditor_id ON records(creditor_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_date ON records(date)')
@@ -208,7 +211,8 @@ class DatabaseManager:
                 for creditor_id, name, created_at in creditors:
                     # Borçlunun kayıtlarını al
                     cursor.execute('''
-                        SELECT date, description, debt_amount, payment_amount, payment_status, created_at
+                        SELECT date, description, debt_amount, payment_amount, payment_status,
+       kod1, kod2, birim, created_at
                         FROM records 
                         WHERE creditor_id = ? 
                         ORDER BY date, created_at
@@ -227,7 +231,10 @@ class DatabaseManager:
                                 'debt_amount': record[2],
                                 'payment_amount': record[3],
                                 'payment_status': record[4],
-                                'created_at': record[5]
+                                'kod1': record[5],
+                                'kod2': record[6],
+                                'birim': record[7],
+                                'created_at': record[8]
                             }
                             for record in records
                         ]
@@ -280,16 +287,16 @@ class DatabaseManager:
     
     def add_record(self, creditor_id: int, date: str, description: str, 
                    debt_amount: float = 0.0, payment_amount: float = 0.0, 
-                   payment_status: str = 'Ödenmedi') -> Optional[int]:
+                   payment_status: str = 'Ödenmedi', kod1: str = '', kod2: str = '', birim: str = '') -> Optional[int]:
         """Yeni kayıt ekle"""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
-                    INSERT INTO records (creditor_id, date, description, debt_amount, payment_amount, payment_status)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (creditor_id, date, description, debt_amount, payment_amount, payment_status))
-                
+                    INSERT INTO records (creditor_id, date, description, debt_amount, payment_amount, payment_status, kod1, kod2, birim)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (creditor_id, date, description, debt_amount, payment_amount, payment_status, kod1, kod2, birim))
+
                 record_id = cursor.lastrowid
                 
                 # Borçlunun updated_at'ini güncelle
@@ -302,7 +309,7 @@ class DatabaseManager:
                 
                 return record_id
         except Exception as e:
-            print(f"Kay��t ekleme hatası: {e}")
+            print(f"Kayıt ekleme hatası: {e}")
             return None
     
     def get_all_creditors(self) -> List[Dict[str, Any]]:
@@ -342,7 +349,7 @@ class DatabaseManager:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
-                    SELECT id, date, description, debt_amount, payment_amount, payment_status, created_at
+                    SELECT id, date, description, debt_amount, payment_amount, payment_status, kod1, kod2, birim, created_at
                     FROM records 
                     WHERE creditor_id = ? 
                     ORDER BY date, created_at
@@ -361,7 +368,10 @@ class DatabaseManager:
                         'debt_amount': row[3],
                         'payment_amount': row[4],
                         'payment_status': row[5],
-                        'created_at': row[6],
+                        'kod1': row[6] if row[6] else '',
+                        'kod2': row[7] if row[7] else '',
+                        'birim': row[8] if row[8] else '',
+                        'created_at': row[9],
                         'remaining_debt': running_debt
                     })
                 
@@ -420,7 +430,10 @@ class DatabaseManager:
                         description=record['description'],
                         debt_amount=record['debt_amount'],
                         payment_amount=record['payment_amount'],
-                        payment_status=record['payment_status']
+                        payment_status=record['payment_status'],
+                        kod1=record.get('kod1', ''),
+                        kod2=record.get('kod2', ''),
+                        birim=record.get('birim', '')
                     )
             
             print("✅ JSON'dan veritabanına geçiş tamamlandı")
