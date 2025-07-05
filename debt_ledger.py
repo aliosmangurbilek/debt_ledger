@@ -24,6 +24,219 @@ import os
 from database_manager import DatabaseManager
 from download_fonts import FontDownloader
 
+class PDFGenerator:
+    """Ortak PDF oluşturucu sınıfı - hem defter hem fiş çıktısı için kullanılır"""
+
+    def __init__(self):
+        self.title_font = None
+        self.regular_font = None
+        self._setup_fonts()
+
+    def _setup_fonts(self):
+        """Font ayarlarını yap"""
+        try:
+            fonts_dir = os.path.join(os.path.dirname(__file__), 'fonts')
+
+            # Öncelikle Roboto'yu deneyelim
+            if os.path.exists(os.path.join(fonts_dir, 'Roboto-Regular.ttf')):
+                pdfmetrics.registerFont(TTFont('Roboto', os.path.join(fonts_dir, 'Roboto-Regular.ttf')))
+                pdfmetrics.registerFont(TTFont('Roboto-Bold', os.path.join(fonts_dir, 'Roboto-Bold.ttf')))
+                addMapping('Roboto', 0, 0, 'Roboto')
+                addMapping('Roboto', 1, 0, 'Roboto-Bold')
+                self.title_font = 'Roboto-Bold'
+                self.regular_font = 'Roboto'
+            else:
+                # Roboto yoksa sistem fontlarından birini kullan
+                fallback_fonts = ['NotoSans-Regular.ttf', 'Arial.ttf', 'Calibri.ttf', 'Tahoma.ttf', 'Verdana.ttf', 'SegoeUI.ttf']
+                for fname in fallback_fonts:
+                    path = os.path.join(fonts_dir, fname)
+                    if os.path.exists(path):
+                        font_name = os.path.splitext(fname)[0].replace('-Regular', '').replace('-Bold', '')
+                        pdfmetrics.registerFont(TTFont(font_name, path))
+                        self.title_font = font_name
+                        self.regular_font = font_name
+                        break
+                else:
+                    raise Exception("Local fonts not found")
+        except Exception as e:
+            print(f"⚠️ Font yükleme hatası: {e}")
+            print("⚠️ Standart fontlar kullanılacak")
+            self.title_font = 'Helvetica-Bold'
+            self.regular_font = 'Helvetica'
+
+    def _split_text_lines(self, text, max_length=8):
+        """Metni belirtilen karakter sayısında satırlara böl"""
+        if not text:
+            return [""]
+        return [text[i:i+max_length] for i in range(0, len(text), max_length)]
+
+    def _draw_receipt_format(self, c, width, height, creditor_name, record, receipt_number=None, y_start=None):
+        """Tek bir fiş formatını çiz - hem tekil fiş hem defter için kullanılır"""
+
+        # Başlangıç Y koordinatı
+        if y_start is None:
+            y_start = height - 50
+
+        # Fiş numarası oluştur
+        if not receipt_number:
+            receipt_number = f"B{record.id:011d}"
+
+        # Başlık Bilgileri
+        c.setFont(self.title_font, 16)
+        c.drawCentredString(width/2, y_start, "GÜRBİLEK OTO TAMİR")
+
+        # Fiş bilgileri
+        c.setFont(self.regular_font, 11)
+        c.drawString(50, y_start - 30, f"Fiş No: {receipt_number}")
+
+        # Tarih formatını düzelt
+        try:
+            date_obj = datetime.strptime(record.date, '%Y-%m-%d')
+            formatted_date = date_obj.strftime('%d.%m.%Y')
+        except:
+            formatted_date = record.date
+
+        c.drawString(400, y_start - 30, f"Tarih: {formatted_date}")
+        c.drawString(50, y_start - 45, f"Müşteri: {creditor_name}")
+
+        # Tablo başlıkları
+        table_start_y = y_start - 80
+        c.setFont(self.title_font, 9)
+
+        # Metinleri satırlara böl
+        description_lines = self._split_text_lines(record.description, 12)  # Açıklama için biraz daha uzun
+        kod1_lines = self._split_text_lines(record.kod1, 8)
+        kod2_lines = self._split_text_lines(record.kod2, 8)
+        max_lines = max(len(description_lines), len(kod1_lines), len(kod2_lines), 1)
+
+        # Tablo yüksekliğini hesapla
+        table_height = 40 + (max_lines * 12)
+
+        # Tablo çizgilerini çiz
+        c.line(50, table_start_y, width - 50, table_start_y)  # Üst çizgi
+        c.line(50, table_start_y - 15, width - 50, table_start_y - 15)  # Başlık alt çizgisi
+
+        # Dikey çizgiler
+        col_positions = [50, 150, 220, 290, 360, 450, width - 50]
+        for x in col_positions:
+            c.line(x, table_start_y, x, table_start_y - table_height)
+
+        # Başlık metinleri
+        headers = ["Cinsi", "Kod1", "Kod2", "Miktar", "Birim", "Tutar"]
+        header_x_positions = [60, 160, 230, 300, 370, 460]
+        for i, header in enumerate(headers):
+            c.drawString(header_x_positions[i], table_start_y - 12, header)
+
+        # Kayıt verilerini yazdır
+        c.setFont(self.regular_font, 8)
+        data_y = table_start_y - 25
+
+        # Miktar ve tutar hesapla
+        if record.debt_amount > 0:
+            miktar = "1"
+            tutar = record.debt_amount
+        else:
+            miktar = "-"
+            tutar = record.payment_amount
+
+        birim = record.birim if record.birim else "Adet"
+
+        # Satır verilerini yazdır
+        for line_idx in range(max_lines):
+            y = data_y - (line_idx * 12)
+
+            # Açıklama (sadece ilk satırda)
+            if line_idx < len(description_lines):
+                c.drawString(header_x_positions[0], y, description_lines[line_idx])
+
+            # Kod1
+            if line_idx < len(kod1_lines):
+                c.drawString(header_x_positions[1], y, kod1_lines[line_idx])
+
+            # Kod2
+            if line_idx < len(kod2_lines):
+                c.drawString(header_x_positions[2], y, kod2_lines[line_idx])
+
+            # Miktar, Birim, Tutar (sadece ilk satırda)
+            if line_idx == 0:
+                c.drawString(header_x_positions[3], y, miktar)
+                c.drawString(header_x_positions[4], y, birim)
+                c.drawString(header_x_positions[5], y, f"₺{tutar:.2f}")
+
+        # Alt çizgi
+        alt_cizgi_y = table_start_y - table_height
+        c.line(50, alt_cizgi_y, width - 50, alt_cizgi_y)
+
+        # Alt Bilgiler - Sadeleştirilmiş
+        c.setFont(self.regular_font, 10)
+        bottom_y = alt_cizgi_y - 25
+
+        # Sadece toplam tutar ve bakiye bilgisi
+        c.drawString(400, bottom_y, f"Toplam: ₺{tutar:.2f}")
+
+        # Yeni bakiye bilgisi
+        c.setFont(self.title_font, 11)
+        yeni_bakiye = record.remaining_debt
+        bakiye_renk = "Alacak" if yeni_bakiye > 0 else "Bakiye Sıfır" if yeni_bakiye == 0 else "Borç"
+        c.drawString(400, bottom_y - 20, f"Kalan Bakiye: ₺{abs(yeni_bakiye):.2f} ({bakiye_renk})")
+
+        # Bu fişin kapladığı toplam yüksekliği döndür
+        return y_start - (bottom_y - 50)  # 50 piksel alt boşluk
+
+    def create_ledger_pdf(self, filepath, creditor_name, records):
+        """Defter çıktısı PDF'i oluştur - tüm fişleri alt alta"""
+        c = canvas.Canvas(filepath, pagesize=letter)
+        width, height = letter
+
+        # Ana başlık
+        c.setFont(self.title_font, 18)
+        c.drawCentredString(width/2, height - 30, f"{creditor_name} - Alacak Verecek Defteri")
+
+        current_y = height - 70
+
+        for i, record in enumerate(records):
+            # Sayfa sonu kontrolü
+            if current_y < 200:  # En az 200px boş alan gerekli
+                c.showPage()
+                current_y = height - 30
+                # Sayfa başlığını tekrar yaz
+                c.setFont(self.title_font, 16)
+                c.drawCentredString(width/2, current_y, f"{creditor_name} - Alacak Verecek Defteri (devam)")
+                current_y -= 40
+
+            # Fiş çiz ve kullanılan yüksekliği al
+            used_height = self._draw_receipt_format(
+                c, width, height, creditor_name, record,
+                receipt_number=f"B{record.id:011d}",
+                y_start=current_y
+            )
+
+            current_y -= used_height + 20  # 20px fişler arası boşluk
+
+            # Fişler arası ayırıcı çizgi
+            if i < len(records) - 1:  # Son fiş değilse
+                c.setLineWidth(0.5)
+                c.line(50, current_y + 10, width - 50, current_y + 10)
+                current_y -= 10
+
+        c.save()
+
+    def create_receipt_pdf(self, filepath, creditor_name, record, receipt_number=None):
+        """Fiş çıktısı PDF'i oluştur - tek fiş"""
+        c = canvas.Canvas(filepath, pagesize=letter)
+        width, height = letter
+
+        # Tek fiş çiz
+        self._draw_receipt_format(
+            c, width, height, creditor_name, record, receipt_number
+        )
+
+        # Alt bilgi
+        c.setFont(self.regular_font, 7)
+        c.drawString(50, 30, f"Bu fiş {datetime.now().strftime('%d.%m.%Y %H:%M')} tarihinde oluşturulmuştur.")
+
+        c.save()
+
 class DebtRecord:
     """Borç kaydı sınıfı - artık veritabanından gelecek"""
     def __init__(self, record_id, date, description, debt_amount=0, payment_amount=0, payment_status="Ödenmedi", remaining_debt=0, kod1="", kod2="", birim="", iskonto=0.0, musteri_masrafi=0.0):
@@ -295,6 +508,7 @@ class CreditorDetailWidget(QWidget):
         super().__init__()
         self.creditor = creditor
         self.parent_app = parent_app
+        self.pdf_generator = PDFGenerator()  # PDF oluşturucu örneği
         self.setup_ui()
         self.populate_table()
 
@@ -561,7 +775,8 @@ class CreditorDetailWidget(QWidget):
         filepath = os.path.join(os.path.expanduser("~"), "Desktop", filename)
 
         try:
-            self.create_pdf(filepath)
+            # Yeni PDFGenerator sınıfını kullan
+            self.pdf_generator.create_ledger_pdf(filepath, self.creditor.name, self.creditor.records)
             QMessageBox.information(self, "Dışa Aktarma Başarılı",
                                   f"Defter şu konuma aktarıldı: {filepath}")
         except Exception as e:
@@ -569,209 +784,19 @@ class CreditorDetailWidget(QWidget):
                                f"PDF dışa aktarma başarısız: {str(e)}")
 
     def create_pdf(self, filepath):
-        """Borçlunun defterinin PDF'ini oluştur"""
-        c = canvas.Canvas(filepath, pagesize=letter)
-        width, height = letter
+        """Eski fonksiyon - artık PDFGenerator kullanıyor"""
+        self.pdf_generator.create_ledger_pdf(filepath, self.creditor.name, self.creditor.records)
 
-        # Register fonts for Turkish characters
-        try:
-            fonts_dir = os.path.join(os.path.dirname(__file__), 'fonts')
-            # Öncelikle Roboto'yu deneyelim
-            if os.path.exists(os.path.join(fonts_dir, 'Roboto-Regular.ttf')):
-                pdfmetrics.registerFont(TTFont('Roboto', os.path.join(fonts_dir, 'Roboto-Regular.ttf')))
-                pdfmetrics.registerFont(TTFont('Roboto-Bold', os.path.join(fonts_dir, 'Roboto-Bold.ttf')))
-                addMapping('Roboto', 0, 0, 'Roboto')
-                addMapping('Roboto', 1, 0, 'Roboto-Bold')
-                title_font = 'Roboto-Bold'
-                regular_font = 'Roboto'
-            else:
-                # Roboto yoksa Noto Sans veya sistem fontlarından birini kullan
-                fallback_fonts = ['NotoSans-Regular.ttf', 'Arial.ttf', 'Calibri.ttf', 'Tahoma.ttf', 'Verdana.ttf', 'SegoeUI.ttf']
-                for fname in fallback_fonts:
-                    path = os.path.join(fonts_dir, fname)
-                    if os.path.exists(path):
-                        # Strip style suffixes for font naming
-                        font_name = os.path.splitext(fname)[0].replace('-Regular', '').replace('-Bold', '')
-                        pdfmetrics.registerFont(TTFont(font_name, path))
-                        # Use the same for title and regular
-                        title_font = font_name
-                        regular_font = font_name
-                        break
-                else:
-                    raise Exception("Local fonts not found")
-        except Exception as e:
-            print(f"⚠️ Font yükleme hatası: {e}")
-            print("⚠️ Standart fontlar kullanılacak")
-            title_font = 'Helvetica-Bold'
-            regular_font = 'Helvetica'
-
-        # Title
-        c.setFont(title_font, 16)
-        c.drawString(50, height - 50, f"{self.creditor.name} için Alacak Verecek Çıktısı")
-
-        # Table headers
-        headers = ["Tarih", "Açıklama", "Borç", "Ödeme", "Kalan", "İşlem Türü"]
-        x_positions = [50, 120, 250, 320, 390, 470]
-        c.setFont(title_font, 10)
-        for i, header in enumerate(headers):
-            c.drawString(x_positions[i], height - 120, header)
-
-        # Table data
-        c.setFont(regular_font, 9)
-        y_position = height - 140
-        for record in self.creditor.records:
-            data = [
-                record.date,
-                record.description,
-                f"₺{record.debt_amount:.2f}",
-                f"₺{record.payment_amount:.2f}",
-                f"₺{record.remaining_debt:.2f}",
-                record.payment_status
-            ]
-            for i, item in enumerate(data):
-                c.drawString(x_positions[i], y_position, str(item))
-            y_position -= 15
-
-        c.save()
-
-    def create_receipt_pdf(self, record, receipt_number=None, iskonto=0.0, musteri_masrafi=0.0):
+    def create_receipt_pdf(self, record, receipt_number=None):
         """Tek bir kayıt için fiş formatında PDF oluştur"""
-        from datetime import datetime
         # Fiş numarası oluştur
         if not receipt_number:
             receipt_number = f"B{record.id:011d}"
         filename = f"fis_{receipt_number}_{self.creditor.name}.pdf"
         filepath = os.path.join(os.path.expanduser("~"), "Desktop", filename)
-        c = canvas.Canvas(filepath, pagesize=letter)
-        width, height = letter
-        # Font ayarları
-        try:
-            fonts_dir = os.path.join(os.path.dirname(__file__), 'fonts')
-            if os.path.exists(os.path.join(fonts_dir, 'Roboto-Regular.ttf')):
-                pdfmetrics.registerFont(TTFont('Roboto', os.path.join(fonts_dir, 'Roboto-Regular.ttf')))
-                pdfmetrics.registerFont(TTFont('Roboto-Bold', os.path.join(fonts_dir, 'Roboto-Bold.ttf')))
-                addMapping('Roboto', 0, 0, 'Roboto')
-                addMapping('Roboto', 1, 0, 'Roboto-Bold')
-                title_font = 'Roboto-Bold'
-                regular_font = 'Roboto'
-            else:
-                fallback_fonts = ['NotoSans-Regular.ttf', 'Arial.ttf', 'Calibri.ttf', 'Tahoma.ttf', 'Verdana.ttf', 'SegoeUI.ttf']
-                for fname in fallback_fonts:
-                    path = os.path.join(fonts_dir, fname)
-                    if os.path.exists(path):
-                        font_name = os.path.splitext(fname)[0].replace('-Regular', '').replace('-Bold', '')
-                        pdfmetrics.registerFont(TTFont(font_name, path))
-                        title_font = font_name
-                        regular_font = font_name
-                        break
-                else:
-                    raise Exception("Local fonts not found")
-        except Exception as e:
-            print(f"⚠️ Font yükleme hatası: {e}")
-            title_font = 'Helvetica-Bold'
-            regular_font = 'Helvetica'
-        # Başlık Bilgileri
-        c.setFont(title_font, 18)
-        c.drawCentredString(width/2, height - 50, "GÜRBİLEK OTO TAMİR")
-        # Fiş bilgileri
-        c.setFont(regular_font, 12)
-        c.drawString(50, height - 90, f"Fiş No: {receipt_number}")
-        # Tarih formatını düzelt (YYYY-MM-DD -> DD.MM.YYYY)
-        try:
-            date_obj = datetime.strptime(record.date, '%Y-%m-%d')
-            formatted_date = date_obj.strftime('%d.%m.%Y')
-        except:
-            formatted_date = record.date
-        c.drawString(400, height - 90, f"Tarih: {formatted_date}")
-        c.drawString(50, height - 110, f"Müşteri: {self.creditor.name}")
-        # Tablo başlıkları
-        table_start_y = height - 160
-        c.setFont(title_font, 10)
 
-        # Kod1 ve Kod2'yi 8 karakterde bir alt satıra böl
-        def split_lines(text, length=8):
-            return [text[i:i+length] for i in range(0, len(text), length)] if text else [""]
-        kod1_lines = split_lines(record.kod1)
-        kod2_lines = split_lines(record.kod2)
-        max_lines = max(len(kod1_lines), len(kod2_lines), 1)  # En az 1 satır
-
-        # Tablo yüksekliğini maksimum satır sayısına göre hesapla
-        table_height = 60 + (max_lines - 1) * 12  # Temel yükseklik + ekstra satırlar
-
-        # Tablo çizgilerini çiz
-        c.line(50, table_start_y, width - 50, table_start_y)  # Üst çizgi
-        c.line(50, table_start_y - 20, width - 50, table_start_y - 20)  # Başlık alt çizgisi
-
-        # Dikey çizgiler - maksimum satır sayısına göre uzat
-        col_positions = [50, 150, 220, 290, 360, 450, width - 50]
-        for x in col_positions:
-            c.line(x, table_start_y, x, table_start_y - table_height)
-
-        # Başlık metinleri
-        headers = ["Cinsi", "Kod1", "Kod2", "Miktar", "Birim", "Tutar"]
-        header_x_positions = [60, 160, 230, 300, 370, 460]
-        for i, header in enumerate(headers):
-            c.drawString(header_x_positions[i], table_start_y - 15, header)
-
-        # Kayıt verilerini yazdır
-        c.setFont(regular_font, 9)
-        data_y = table_start_y - 35
-
-        # Miktar bilgisi (borç kaydı ise 1, ödeme ise 0 olarak göster)
-        if record.debt_amount > 0:
-            miktar = "1"
-            tutar = record.debt_amount
-        else:
-            miktar = "-"
-            tutar = record.payment_amount
-        birim = record.birim if record.birim else "Adet"
-        tutar = record.debt_amount if record.debt_amount > 0 else record.payment_amount
-
-        row_data = [
-            record.description,  # Cinsi (tam uzunluk)
-            kod1_lines,  # Kod1 (satırlı)
-            kod2_lines,  # Kod2 (satırlı)
-            miktar,  # Miktar
-            birim,  # Birim (tam uzunluk)
-            f"₺{tutar:.2f}"  # Tutar
-        ]
-
-        for line_idx in range(max_lines):
-            y = data_y - (line_idx * 12)
-            c.drawString(header_x_positions[0], y, str(row_data[0]) if line_idx == 0 else "")
-            c.drawString(header_x_positions[1], y, kod1_lines[line_idx] if line_idx < len(kod1_lines) else "")
-            c.drawString(header_x_positions[2], y, kod2_lines[line_idx] if line_idx < len(kod2_lines) else "")
-            c.drawString(header_x_positions[3], y, str(row_data[3]) if line_idx == 0 else "")
-            c.drawString(header_x_positions[4], y, str(row_data[4]) if line_idx == 0 else "")
-            c.drawString(header_x_positions[5], y, str(row_data[5]) if line_idx == 0 else "")
-
-        # Alt çizgi - doğru konuma yerleştir
-        alt_cizgi_y = table_start_y - table_height
-        c.line(50, alt_cizgi_y, width - 50, alt_cizgi_y)
-
-        # Alt Bilgiler - alt çizgiden sonra başlat
-        c.setFont(regular_font, 10)
-        bottom_y = alt_cizgi_y - 40  # Alt çizgiden 40 piksel aşağıda
-
-        # Hesaplamalar
-        ara_toplam = tutar
-        genel_toplam = ara_toplam - iskonto + musteri_masrafi
-        # Önceki bakiye hesapla (bu kayıttan önceki kalan borç)
-        onceki_bakiye = record.remaining_debt - record.debt_amount + record.payment_amount
-        yeni_bakiye = record.remaining_debt
-        c.drawString(400, bottom_y, f"Ara Toplam: ₺{ara_toplam:.2f}")
-        c.drawString(400, bottom_y - 20, f"İskonto Toplamı: ₺{iskonto:.2f}")
-        c.drawString(400, bottom_y - 40, f"Müşteri Masrafı: ₺{musteri_masrafi:.2f}")
-        c.drawString(400, bottom_y - 60, f"Genel Toplam: ₺{genel_toplam:.2f}")
-        # Yeni bakiye bilgisi
-        c.setFont(title_font, 12)
-        bakiye_renk = "Alacak" if yeni_bakiye > 0 else "Bakiye Sıfır" if yeni_bakiye == 0 else "Borç"
-        c.drawString(400, bottom_y - 90, f"Yeni Bakiye: ₺{abs(yeni_bakiye):.2f} ({bakiye_renk})")
-        # Alt bilgi
-        c.setFont(regular_font, 8)
-        c.drawString(50, 50, f"Bu fiş {datetime.now().strftime('%d.%m.%Y %H:%M')} tarihinde oluşturulmuştur.")
-
-        c.save()
+        # Yeni PDFGenerator sınıfını kullan
+        self.pdf_generator.create_receipt_pdf(filepath, self.creditor.name, record, receipt_number)
         return filepath
 
     def export_receipt_for_record(self):
@@ -784,17 +809,14 @@ class CreditorDetailWidget(QWidget):
             QMessageBox.warning(self, "Hata", "Geçersiz kayıt seçimi!")
             return
         record = self.creditor.records[current_row]
-        # Yeni dialog ile iskonto ve masraf al
-        dialog = ReceiptOptionsDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            iskonto, masraf = dialog.get_values()
-            try:
-                filepath = self.create_receipt_pdf(record, iskonto=iskonto, musteri_masrafi=masraf)
-                QMessageBox.information(self, "Fiş Oluşturuldu",
-                                      f"Fiş başarıyla oluşturuldu: {filepath}")
-            except Exception as e:
-                QMessageBox.critical(self, "Fiş Oluşturma Hatası",
-                                   f"Fiş oluşturulurken hata: {str(e)}")
+
+        try:
+            filepath = self.create_receipt_pdf(record)
+            QMessageBox.information(self, "Fiş Oluşturuldu",
+                                  f"Fiş başarıyla oluşturuldu: {filepath}")
+        except Exception as e:
+            QMessageBox.critical(self, "Fiş Oluşturma Hatası",
+                               f"Fiş oluşturulurken hata: {str(e)}")
 
 class ReceiptOptionsDialog(QDialog):
     """Fiş çıktısı için iskonto ve müşteri masrafı girişi"""
@@ -1114,7 +1136,7 @@ class DebtLedgerApp(QMainWindow):
 
         self.setCentralWidget(central)
 
-    # ──────────────────────────────────────────────────────────────────────
+    # ───────────────────────────────────────────────────────────────��──────
 
     # Yardımcı metotlar  (aynı sınıfa ekle) ───────────────────────────────
     def add_creditor(self):
