@@ -80,10 +80,23 @@ class DatabaseManager:
                     kod1 TEXT DEFAULT '',
                     kod2 TEXT DEFAULT '',
                     birim TEXT DEFAULT '',
+                    iskonto REAL DEFAULT 0.0,
+                    musteri_masrafi REAL DEFAULT 0.0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (creditor_id) REFERENCES creditors (id) ON DELETE CASCADE
                 )
             ''')
+
+            # Mevcut tabloda yeni sütunları ekle (upgrade için)
+            try:
+                cursor.execute('ALTER TABLE records ADD COLUMN iskonto REAL DEFAULT 0.0')
+            except sqlite3.OperationalError:
+                pass  # Sütun zaten var
+
+            try:
+                cursor.execute('ALTER TABLE records ADD COLUMN musteri_masrafi REAL DEFAULT 0.0')
+            except sqlite3.OperationalError:
+                pass  # Sütun zaten var
 
             # İndeksler oluştur
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_creditor_id ON records(creditor_id)')
@@ -212,7 +225,7 @@ class DatabaseManager:
                     # Borçlunun kayıtlarını al
                     cursor.execute('''
                         SELECT date, description, debt_amount, payment_amount, payment_status,
-       kod1, kod2, birim, created_at
+                               kod1, kod2, birim, COALESCE(iskonto, 0.0), COALESCE(musteri_masrafi, 0.0), created_at
                         FROM records 
                         WHERE creditor_id = ? 
                         ORDER BY date, created_at
@@ -234,7 +247,9 @@ class DatabaseManager:
                                 'kod1': record[5],
                                 'kod2': record[6],
                                 'birim': record[7],
-                                'created_at': record[8]
+                                'iskonto': record[8],
+                                'musteri_masrafi': record[9],
+                                'created_at': record[10]
                             }
                             for record in records
                         ]
@@ -287,15 +302,16 @@ class DatabaseManager:
     
     def add_record(self, creditor_id: int, date: str, description: str, 
                    debt_amount: float = 0.0, payment_amount: float = 0.0, 
-                   payment_status: str = 'Ödenmedi', kod1: str = '', kod2: str = '', birim: str = '') -> Optional[int]:
+                   payment_status: str = 'Ödenmedi', kod1: str = '', kod2: str = '', birim: str = '',
+                   iskonto: float = 0.0, musteri_masrafi: float = 0.0) -> Optional[int]:
         """Yeni kayıt ekle"""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
-                    INSERT INTO records (creditor_id, date, description, debt_amount, payment_amount, payment_status, kod1, kod2, birim)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (creditor_id, date, description, debt_amount, payment_amount, payment_status, kod1, kod2, birim))
+                    INSERT INTO records (creditor_id, date, description, debt_amount, payment_amount, payment_status, kod1, kod2, birim, iskonto, musteri_masrafi)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (creditor_id, date, description, debt_amount, payment_amount, payment_status, kod1, kod2, birim, iskonto, musteri_masrafi))
 
                 record_id = cursor.lastrowid
                 
@@ -319,7 +335,7 @@ class DatabaseManager:
                 cursor = conn.cursor()
                 cursor.execute('''
                     SELECT c.id, c.name, c.created_at, c.updated_at,
-                           COALESCE(SUM(r.debt_amount - r.payment_amount), 0) as total_debt,
+                           COALESCE(SUM(r.debt_amount - r.payment_amount - COALESCE(r.iskonto, 0.0) + COALESCE(r.musteri_masrafi, 0.0)), 0) as total_debt,
                            COUNT(r.id) as record_count
                     FROM creditors c
                     LEFT JOIN records r ON c.id = r.creditor_id
@@ -349,7 +365,8 @@ class DatabaseManager:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
-                    SELECT id, date, description, debt_amount, payment_amount, payment_status, kod1, kod2, birim, created_at
+                    SELECT id, date, description, debt_amount, payment_amount, payment_status, kod1, kod2, birim, 
+                           COALESCE(iskonto, 0.0) as iskonto, COALESCE(musteri_masrafi, 0.0) as musteri_masrafi, created_at
                     FROM records 
                     WHERE creditor_id = ? 
                     ORDER BY date, created_at
@@ -359,8 +376,10 @@ class DatabaseManager:
                 running_debt = 0.0
                 
                 for row in cursor.fetchall():
-                    running_debt += row[3] - row[4]  # debt_amount - payment_amount
-                    
+                    # İskonto ve müşteri masrafını da bakiye hesaplamasına dahil et
+                    net_debt = row[3] - row[4] - row[9] + row[10]  # debt_amount - payment_amount - iskonto + musteri_masrafi
+                    running_debt += net_debt
+
                     records.append({
                         'id': row[0],
                         'date': row[1],
@@ -371,7 +390,9 @@ class DatabaseManager:
                         'kod1': row[6] if row[6] else '',
                         'kod2': row[7] if row[7] else '',
                         'birim': row[8] if row[8] else '',
-                        'created_at': row[9],
+                        'iskonto': row[9],
+                        'musteri_masrafi': row[10],
+                        'created_at': row[11],
                         'remaining_debt': running_debt
                     })
                 
@@ -457,6 +478,17 @@ class DatabaseManager:
                 cursor.execute('SELECT COUNT(*) FROM records')
                 record_count = cursor.fetchone()[0]
 
+                # Toplam borç, ödeme, iskonto ve masraf
+                cursor.execute('SELECT SUM(debt_amount), SUM(payment_amount), SUM(COALESCE(iskonto, 0.0)), SUM(COALESCE(musteri_masrafi, 0.0)) FROM records')
+                amounts = cursor.fetchone()
+                total_debt = amounts[0] or 0
+                total_payment = amounts[1] or 0
+                total_iskonto = amounts[2] or 0
+                total_masraf = amounts[3] or 0
+
+                # Net bakiye hesaplama (iskonto ve masraf dahil)
+                net_balance = total_debt - total_payment - total_iskonto + total_masraf
+
                 # En eski kayıt tarihi
                 cursor.execute('SELECT MIN(date) FROM records')
                 oldest_date = cursor.fetchone()[0]
@@ -471,6 +503,11 @@ class DatabaseManager:
                 return {
                     'creditor_count': creditor_count,
                     'record_count': record_count,
+                    'total_debt': total_debt,
+                    'total_payment': total_payment,
+                    'total_iskonto': total_iskonto,
+                    'total_masraf': total_masraf,
+                    'net_balance': net_balance,
                     'oldest_date': oldest_date,
                     'newest_date': newest_date,
                     'db_size_mb': db_size / (1024 * 1024),

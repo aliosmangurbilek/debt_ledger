@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QMessageBox, QInputDialog, QTableWidget, QTableWidgetItem,
                              QHeaderView, QDialog, QFormLayout, QLineEdit, QComboBox,
                              QDateEdit, QTextEdit, QDialogButtonBox, QApplication,
-                             QProgressDialog, QSpinBox, QGroupBox)
+                             QProgressDialog, QSpinBox, QGroupBox, QDoubleSpinBox)
 from PyQt6.QtCore import Qt, QDate, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QAction
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
@@ -26,7 +26,7 @@ from download_fonts import FontDownloader
 
 class DebtRecord:
     """Borç kaydı sınıfı - artık veritabanından gelecek"""
-    def __init__(self, record_id, date, description, debt_amount=0, payment_amount=0, payment_status="Ödenmedi", remaining_debt=0, kod1="", kod2="", birim=""):
+    def __init__(self, record_id, date, description, debt_amount=0, payment_amount=0, payment_status="Ödenmedi", remaining_debt=0, kod1="", kod2="", birim="", iskonto=0.0, musteri_masrafi=0.0):
         self.id = record_id
         self.date = date
         self.description = description
@@ -37,6 +37,8 @@ class DebtRecord:
         self.kod1 = kod1
         self.kod2 = kod2
         self.birim = birim
+        self.iskonto = float(iskonto) if iskonto else 0.0
+        self.musteri_masrafi = float(musteri_masrafi) if musteri_masrafi else 0.0
 
     def to_dict(self):
         return {
@@ -49,7 +51,9 @@ class DebtRecord:
             'remaining_debt': self.remaining_debt,
             'kod1': self.kod1,
             'kod2': self.kod2,
-            'birim': self.birim
+            'birim': self.birim,
+            'iskonto': self.iskonto,
+            'musteri_masrafi': self.musteri_masrafi
         }
 
     @classmethod
@@ -64,7 +68,9 @@ class DebtRecord:
             remaining_debt=data.get('remaining_debt', 0),
             kod1=data.get('kod1', ""),
             kod2=data.get('kod2', ""),
-            birim=data.get('birim', "")
+            birim=data.get('birim', ""),
+            iskonto=data.get('iskonto', 0.0),
+            musteri_masrafi=data.get('musteri_masrafi', 0.0)
         )
 
 class Creditor:
@@ -95,7 +101,9 @@ class Creditor:
             remaining_debt=r['remaining_debt'],
             kod1=r.get('kod1', ''),
             kod2=r.get('kod2', ''),
-            birim=r.get('birim', '')
+            birim=r.get('birim', ''),
+            iskonto=r.get('iskonto', 0.0),
+            musteri_masrafi=r.get('musteri_masrafi', 0.0)
         ) for r in records_data]
 
     def refresh_records(self):
@@ -426,9 +434,12 @@ class CreditorDetailWidget(QWidget):
         for row, record in enumerate(self.creditor.records):
             self.table.setItem(row, 0, QTableWidgetItem(record.date))
             self.table.setItem(row, 1, QTableWidgetItem(record.description))
-            self.table.setItem(row, 2, QTableWidgetItem(f"₺{record.debt_amount:.2f}"))
-            self.table.setItem(row, 3, QTableWidgetItem(f"₺{record.payment_amount:.2f}"))
-            self.table.setItem(row, 4, QTableWidgetItem(f"₺{record.remaining_debt:.2f}"))
+            self.table.setItem(row, 2, QTableWidgetItem(record.kod1))  # Kod1
+            self.table.setItem(row, 3, QTableWidgetItem(record.kod2))  # Kod2
+            self.table.setItem(row, 4, QTableWidgetItem(record.birim))  # Birim
+            self.table.setItem(row, 5, QTableWidgetItem(f"₺{record.debt_amount:.2f}"))  # Borç Tutarı
+            self.table.setItem(row, 6, QTableWidgetItem(f"₺{record.payment_amount:.2f}"))  # Ödeme Tutarı
+            self.table.setItem(row, 7, QTableWidgetItem(f"₺{record.remaining_debt:.2f}"))  # Kalan Borç
 
             # İşlem türünü belirle
             if record.debt_amount > 0 and record.payment_amount == 0:
@@ -440,10 +451,10 @@ class CreditorDetailWidget(QWidget):
             else:
                 transaction_type = "Düzenleme"
 
-            self.table.setItem(row, 5, QTableWidgetItem(transaction_type))
+            self.table.setItem(row, 8, QTableWidgetItem(transaction_type))  # İşlem Türü
 
             # Color code the remaining debt
-            remaining_item = self.table.item(row, 4)
+            remaining_item = self.table.item(row, 7)  # Kalan borç sütunu artık 7. sütun
             if record.remaining_debt > 0:
                 remaining_item.setBackground(Qt.GlobalColor.lightGray)
 
@@ -623,20 +634,16 @@ class CreditorDetailWidget(QWidget):
 
         c.save()
 
-    def create_receipt_pdf(self, record, receipt_number=None):
+    def create_receipt_pdf(self, record, receipt_number=None, iskonto=0.0, musteri_masrafi=0.0):
         """Tek bir kayıt için fiş formatında PDF oluştur"""
         from datetime import datetime
-
         # Fiş numarası oluştur
         if not receipt_number:
             receipt_number = f"B{record.id:011d}"
-
         filename = f"fis_{receipt_number}_{self.creditor.name}.pdf"
         filepath = os.path.join(os.path.expanduser("~"), "Desktop", filename)
-
         c = canvas.Canvas(filepath, pagesize=letter)
         width, height = letter
-
         # Font ayarları
         try:
             fonts_dir = os.path.join(os.path.dirname(__file__), 'fonts')
@@ -663,42 +670,46 @@ class CreditorDetailWidget(QWidget):
             print(f"⚠️ Font yükleme hatası: {e}")
             title_font = 'Helvetica-Bold'
             regular_font = 'Helvetica'
-
         # Başlık Bilgileri
         c.setFont(title_font, 18)
         c.drawCentredString(width/2, height - 50, "GÜRBİLEK OTO TAMİR")
-
         # Fiş bilgileri
         c.setFont(regular_font, 12)
         c.drawString(50, height - 90, f"Fiş No: {receipt_number}")
-
         # Tarih formatını düzelt (YYYY-MM-DD -> DD.MM.YYYY)
         try:
             date_obj = datetime.strptime(record.date, '%Y-%m-%d')
             formatted_date = date_obj.strftime('%d.%m.%Y')
         except:
             formatted_date = record.date
-
         c.drawString(400, height - 90, f"Tarih: {formatted_date}")
         c.drawString(50, height - 110, f"Müşteri: {self.creditor.name}")
-
         # Tablo başlıkları
         table_start_y = height - 160
         c.setFont(title_font, 10)
+
+        # Kod1 ve Kod2'yi 8 karakterde bir alt satıra böl
+        def split_lines(text, length=8):
+            return [text[i:i+length] for i in range(0, len(text), length)] if text else [""]
+        kod1_lines = split_lines(record.kod1)
+        kod2_lines = split_lines(record.kod2)
+        max_lines = max(len(kod1_lines), len(kod2_lines), 1)  # En az 1 satır
+
+        # Tablo yüksekliğini maksimum satır sayısına göre hesapla
+        table_height = 60 + (max_lines - 1) * 12  # Temel yükseklik + ekstra satırlar
 
         # Tablo çizgilerini çiz
         c.line(50, table_start_y, width - 50, table_start_y)  # Üst çizgi
         c.line(50, table_start_y - 20, width - 50, table_start_y - 20)  # Başlık alt çizgisi
 
-        # Dikey çizgiler
+        # Dikey çizgiler - maksimum satır sayısına göre uzat
         col_positions = [50, 150, 220, 290, 360, 450, width - 50]
         for x in col_positions:
-            c.line(x, table_start_y, x, table_start_y - 60)
+            c.line(x, table_start_y, x, table_start_y - table_height)
 
         # Başlık metinleri
         headers = ["Cinsi", "Kod1", "Kod2", "Miktar", "Birim", "Tutar"]
         header_x_positions = [60, 160, 230, 300, 370, 460]
-
         for i, header in enumerate(headers):
             c.drawString(header_x_positions[i], table_start_y - 15, header)
 
@@ -717,44 +728,45 @@ class CreditorDetailWidget(QWidget):
         tutar = record.debt_amount if record.debt_amount > 0 else record.payment_amount
 
         row_data = [
-            record.description[:15],  # Cinsi (kısalt)
-            record.kod1[:8] if record.kod1 else "",  # Kod1
-            record.kod2[:8] if record.kod2 else "",  # Kod2
+            record.description,  # Cinsi (tam uzunluk)
+            kod1_lines,  # Kod1 (satırlı)
+            kod2_lines,  # Kod2 (satırlı)
             miktar,  # Miktar
-            birim[:8],  # Birim
+            birim,  # Birim (tam uzunluk)
             f"₺{tutar:.2f}"  # Tutar
         ]
 
-        for i, data in enumerate(row_data):
-            c.drawString(header_x_positions[i], data_y, str(data))
+        for line_idx in range(max_lines):
+            y = data_y - (line_idx * 12)
+            c.drawString(header_x_positions[0], y, str(row_data[0]) if line_idx == 0 else "")
+            c.drawString(header_x_positions[1], y, kod1_lines[line_idx] if line_idx < len(kod1_lines) else "")
+            c.drawString(header_x_positions[2], y, kod2_lines[line_idx] if line_idx < len(kod2_lines) else "")
+            c.drawString(header_x_positions[3], y, str(row_data[3]) if line_idx == 0 else "")
+            c.drawString(header_x_positions[4], y, str(row_data[4]) if line_idx == 0 else "")
+            c.drawString(header_x_positions[5], y, str(row_data[5]) if line_idx == 0 else "")
 
-        # Alt çizgi
-        c.line(50, table_start_y - 60, width - 50, table_start_y - 60)
+        # Alt çizgi - doğru konuma yerleştir
+        alt_cizgi_y = table_start_y - table_height
+        c.line(50, alt_cizgi_y, width - 50, alt_cizgi_y)
 
-        # Alt Bilgiler
+        # Alt Bilgiler - alt çizgiden sonra başlat
         c.setFont(regular_font, 10)
-        bottom_y = table_start_y - 100
+        bottom_y = alt_cizgi_y - 40  # Alt çizgiden 40 piksel aşağıda
 
         # Hesaplamalar
         ara_toplam = tutar
-        iskonto = 0.0
-        musteri_masrafi = 0.0
         genel_toplam = ara_toplam - iskonto + musteri_masrafi
-
         # Önceki bakiye hesapla (bu kayıttan önceki kalan borç)
         onceki_bakiye = record.remaining_debt - record.debt_amount + record.payment_amount
         yeni_bakiye = record.remaining_debt
-
         c.drawString(400, bottom_y, f"Ara Toplam: ₺{ara_toplam:.2f}")
         c.drawString(400, bottom_y - 20, f"İskonto Toplamı: ₺{iskonto:.2f}")
         c.drawString(400, bottom_y - 40, f"Müşteri Masrafı: ₺{musteri_masrafi:.2f}")
         c.drawString(400, bottom_y - 60, f"Genel Toplam: ₺{genel_toplam:.2f}")
-
         # Yeni bakiye bilgisi
         c.setFont(title_font, 12)
         bakiye_renk = "Alacak" if yeni_bakiye > 0 else "Bakiye Sıfır" if yeni_bakiye == 0 else "Borç"
         c.drawString(400, bottom_y - 90, f"Yeni Bakiye: ₺{abs(yeni_bakiye):.2f} ({bakiye_renk})")
-
         # Alt bilgi
         c.setFont(regular_font, 8)
         c.drawString(50, 50, f"Bu fiş {datetime.now().strftime('%d.%m.%Y %H:%M')} tarihinde oluşturulmuştur.")
@@ -768,20 +780,54 @@ class CreditorDetailWidget(QWidget):
         if current_row < 0:
             QMessageBox.warning(self, "Seçim Hatası", "Lütfen fiş çıktısı almak istediğiniz kaydı seçin!")
             return
-
         if current_row >= len(self.creditor.records):
             QMessageBox.warning(self, "Hata", "Geçersiz kayıt seçimi!")
             return
-
         record = self.creditor.records[current_row]
+        # Yeni dialog ile iskonto ve masraf al
+        dialog = ReceiptOptionsDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            iskonto, masraf = dialog.get_values()
+            try:
+                filepath = self.create_receipt_pdf(record, iskonto=iskonto, musteri_masrafi=masraf)
+                QMessageBox.information(self, "Fiş Oluşturuldu",
+                                      f"Fiş başarıyla oluşturuldu: {filepath}")
+            except Exception as e:
+                QMessageBox.critical(self, "Fiş Oluşturma Hatası",
+                                   f"Fiş oluşturulurken hata: {str(e)}")
 
-        try:
-            filepath = self.create_receipt_pdf(record)
-            QMessageBox.information(self, "Fiş Oluşturuldu",
-                                  f"Fiş başarıyla oluşturuldu: {filepath}")
-        except Exception as e:
-            QMessageBox.critical(self, "Fiş Oluşturma Hatası",
-                               f"Fiş oluşturulurken hata: {str(e)}")
+class ReceiptOptionsDialog(QDialog):
+    """Fiş çıktısı için iskonto ve müşteri masrafı girişi"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Fiş Çıktısı Ayarları")
+        self.setModal(True)
+        self.resize(350, 180)
+        layout = QFormLayout()
+        font = QFont("Arial", 12)
+        self.setFont(font)
+        self.iskonto_spin = QDoubleSpinBox()
+        self.iskonto_spin.setFont(font)
+        self.iskonto_spin.setMinimum(0)
+        self.iskonto_spin.setMaximum(9999999)
+        self.iskonto_spin.setDecimals(2)
+        self.iskonto_spin.setSuffix(" ₺")
+        layout.addRow("İskonto Toplamı:", self.iskonto_spin)
+        self.masraf_spin = QDoubleSpinBox()
+        self.masraf_spin.setFont(font)
+        self.masraf_spin.setMinimum(0)
+        self.masraf_spin.setMaximum(9999999)
+        self.masraf_spin.setDecimals(2)
+        self.masraf_spin.setSuffix(" ₺")
+        layout.addRow("Müşteri Masrafı:", self.masraf_spin)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.setFont(font)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+        self.setLayout(layout)
+    def get_values(self):
+        return self.iskonto_spin.value(), self.masraf_spin.value()
 
 class DatabaseSettingsDialog(QDialog):
     """Veritabanı ayarları ve yönetimi dialog'u"""
@@ -995,7 +1041,7 @@ class DebtLedgerApp(QMainWindow):
         FontDownloader().setup_fonts()
 
         self.setWindowTitle("Veresiye Defteri Uygulaması")
-        self.setGeometry(100, 100, 1300, 900)
+        self.setGeometry(100, 100, 1400, 1000)
 
         self.setup_ui()
         self.update_creditor_list()
