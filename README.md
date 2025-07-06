@@ -48,7 +48,7 @@ ReportLab (PDF oluşturma için)
 
 ### Adım 1: Depoyu klonlayın
 ```bash
-git clone https://github.com/kullanici-adi/veresiye-defteri.git
+git clone https://github.com/aliosmangurbilek/debt_ledger.git
 cd veresiye-defteri
 ```
 
@@ -227,18 +227,7 @@ cp backups/en_son_yedek.db veresiye_defteri.db
 Sorunlarınız için:
 - **Issues**: GitHub Issues sayfasını kullanın
 - **Dokümantasyon**: Bu README dosyasını inceleyin
-- **Email**: [destek@example.com](mailto:destek@example.com)
-
-## 📜 Lisans
-
-Bu proje MIT lisansı altında lisanslanmıştır. Detaylar için `LICENSE` dosyasına bakın.
-
-## 🙏 Teşekkürler
-
-- **PyQt6** - GUI framework
-- **ReportLab** - PDF oluşturma
-- **SQLite** - Veritabanı motoru
-- **Google Fonts** - Font kaynakları
+- **Email**: [aliosmangurbil@gmail.com](mailto:destek@example.com)
 
 ---
 
