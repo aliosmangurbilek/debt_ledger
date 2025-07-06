@@ -6,38 +6,58 @@ A PyQt6 application for managing creditor debts and payments.
 
 import sys
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtGui import QFont, QFontDatabase, QTextDocument
+from PyQt6.QtGui import QFont, QFontDatabase
 from debt_ledger import DebtLedgerApp
 
 def setup_turkish_fonts():
     """Türkçe karakterler için sistem fontlarını ayarla"""
     try:
-        # Sistem fontlarını dene (en güvenli seçenek)
+        # Linux sistem fontlarını öncelikle dene
         system_fonts = [
-            "Segoe UI",    # Windows 10/11 varsayılan fontu
-            "Tahoma",      # Windows eski sürümler
-            "Arial",       # Evrensel font
-            "Calibri",     # Office fontu
-            "Verdana"      # Web güvenli font
+            "Liberation Sans",  # Linux varsayılan
+            "DejaVu Sans",      # Linux yaygın font
+            "Ubuntu",           # Ubuntu font
+            "Noto Sans",        # Google Noto
+            "Arial",            # Fallback
+            "Helvetica",        # Fallback
+            "Sans Serif"        # Son çare
         ]
 
         font_db = QFontDatabase()
 
         for font_name in system_fonts:
-            if font_db.hasFamily(font_name):
+            # Mevcut fontları listele ve kontrol et
+            available_families = font_db.families()
+            if font_name in available_families:
                 app_font = QFont(font_name, 10)
-                QApplication.instance().setFont(app_font)
-                print(f"✓ {font_name} sistem fontu başarıyla ayarlandı")
-                return
+                app_font.setStyleHint(QFont.StyleHint.SansSerif)
+                app = QApplication.instance()
+                if app:
+                    app.setFont(app_font)
+                    print(f"✓ {font_name} sistem fontu başarıyla ayarlandı")
+                    return
 
         # Hiçbir font bulunamazsa varsayılan Qt fontu kullan
         print("⚠️ Hiçbir sistem fontu bulunamadı, Qt varsayılanı kullanılacak")
+        default_font = QFont()
+        default_font.setPointSize(10)
+        default_font.setStyleHint(QFont.StyleHint.SansSerif)
+        app = QApplication.instance()
+        if app:
+            app.setFont(default_font)
 
     except Exception as e:
         print(f"⚠️ Font ayarlama hatası: {e}")
         print("⚠️ Standart fontlar kullanılacak")
-        # En güvenli seçenek - hiçbir font ayarlaması yapma
-        pass
+        # En güvenli seçenek - varsayılan font kullan
+        try:
+            default_font = QFont()
+            default_font.setPointSize(10)
+            app = QApplication.instance()
+            if app:
+                app.setFont(default_font)
+        except:
+            pass
 
 def main():
     app = QApplication(sys.argv)

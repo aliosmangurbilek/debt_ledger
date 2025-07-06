@@ -33,34 +33,38 @@ class PDFGenerator:
         self._setup_fonts()
 
     def _setup_fonts(self):
-        """Font ayarlarını yap"""
+        """Font ayarlarını yap - basitleştirilmiş"""
         try:
             fonts_dir = os.path.join(os.path.dirname(__file__), 'fonts')
 
-            # Öncelikle Roboto'yu deneyelim
-            if os.path.exists(os.path.join(fonts_dir, 'Roboto-Regular.ttf')):
-                pdfmetrics.registerFont(TTFont('Roboto', os.path.join(fonts_dir, 'Roboto-Regular.ttf')))
-                pdfmetrics.registerFont(TTFont('Roboto-Bold', os.path.join(fonts_dir, 'Roboto-Bold.ttf')))
-                addMapping('Roboto', 0, 0, 'Roboto')
-                addMapping('Roboto', 1, 0, 'Roboto-Bold')
-                self.title_font = 'Roboto-Bold'
-                self.regular_font = 'Roboto'
-            else:
-                # Roboto yoksa sistem fontlarından birini kullan
-                fallback_fonts = ['NotoSans-Regular.ttf', 'Arial.ttf', 'Calibri.ttf', 'Tahoma.ttf', 'Verdana.ttf', 'SegoeUI.ttf']
-                for fname in fallback_fonts:
-                    path = os.path.join(fonts_dir, fname)
-                    if os.path.exists(path):
-                        font_name = os.path.splitext(fname)[0].replace('-Regular', '').replace('-Bold', '')
-                        pdfmetrics.registerFont(TTFont(font_name, path))
-                        self.title_font = font_name
-                        self.regular_font = font_name
-                        break
-                else:
-                    raise Exception("Local fonts not found")
+            # Mevcut fontları kontrol et
+            available_fonts = []
+            if os.path.exists(fonts_dir):
+                for font_file in os.listdir(fonts_dir):
+                    if font_file.endswith('.ttf'):
+                        available_fonts.append(font_file)
+
+            # Eğer herhangi bir font varsa ilkini kullan
+            if available_fonts:
+                first_font = available_fonts[0]
+                font_path = os.path.join(fonts_dir, first_font)
+                font_name = os.path.splitext(first_font)[0].replace('-Regular', '').replace('-Bold', '')
+
+                try:
+                    pdfmetrics.registerFont(TTFont(font_name, font_path))
+                    self.title_font = font_name
+                    self.regular_font = font_name
+                    print(f"✓ PDF için {font_name} fontu yüklendi")
+                    return
+                except Exception as e:
+                    print(f"⚠️ Font yükleme hatası: {e}")
+
+            # Hiçbir font yoksa standart fontları kullan
+            raise Exception("Özel fontlar bulunamadı")
+
         except Exception as e:
-            print(f"⚠️ Font yükleme hatası: {e}")
-            print("⚠️ Standart fontlar kullanılacak")
+            print(f"⚠️ PDF font ayarlama uyarısı: {e}")
+            print("⚠️ PDF için standart fontlar kullanılacak")
             self.title_font = 'Helvetica-Bold'
             self.regular_font = 'Helvetica'
 
@@ -1092,6 +1096,29 @@ class DebtLedgerApp(QMainWindow):
         add_btn.clicked.connect(self.add_creditor)
         left_layout.addWidget(add_btn)
 
+        # Arama çubuğu ekle
+        search_label = QLabel("Borçlu Ara:")
+        search_label.setFont(QFont("Arial", 11))
+        left_layout.addWidget(search_label)
+
+        self.search_input = QLineEdit()
+        self.search_input.setFont(QFont("Arial", 12))
+        self.search_input.setPlaceholderText("İsim yazarak arayın...")
+        self.search_input.setMinimumHeight(35)
+        self.search_input.setStyleSheet("""
+            QLineEdit {
+                border: 2px solid #cccccc;
+                border-radius: 8px;
+                padding: 5px 10px;
+                background-color: white;
+            }
+            QLineEdit:focus {
+                border-color: #4CAF50;
+            }
+        """)
+        self.search_input.textChanged.connect(self.filter_creditors)
+        left_layout.addWidget(self.search_input)
+
         # Borçlu listesi
         self.creditor_list = QListWidget()
         self.creditor_list.setFont(QFont("Arial", 12))
@@ -1196,3 +1223,22 @@ class DebtLedgerApp(QMainWindow):
 
     def show_main_page(self):
         self.stacked_widget.setCurrentIndex(0)
+
+    def filter_creditors(self):
+        """Borçluları arama çubuğuna göre filtrele"""
+        search_text = self.search_input.text().strip().lower()
+
+        # Tüm borçluları göster
+        if not search_text:
+            self.update_creditor_list()
+            return
+
+        filtered_creditors = []
+        for c in self.db_manager.get_all_creditors():
+            if search_text in c["name"].lower():
+                filtered_creditors.append(c)
+
+        self.creditor_list.clear()
+        for c in filtered_creditors:
+            total = c["total_debt"]
+            self.creditor_list.addItem(f"{c['name']} - ₺{total:.2f}")
