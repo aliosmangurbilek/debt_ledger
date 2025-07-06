@@ -1110,7 +1110,7 @@ class DebtLedgerApp(QMainWindow):
                 border: 2px solid #cccccc;
                 border-radius: 8px;
                 padding: 5px 10px;
-                background-color: white;
+                background-color: grey;
             }
             QLineEdit:focus {
                 border-color: #4CAF50;
